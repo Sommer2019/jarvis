@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/*
+!data/.gitkeep
+models/
+.pytest_cache/
+# persönliche Daten von Jarvis
+workspace/memory.md
+workspace/todo.md
+workspace/notizen/
+*.egg-info/

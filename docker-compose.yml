@@ -1,0 +1,16 @@
+services:
+  jarvis:
+    build: .
+    container_name: jarvis
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./workspace:/app/workspace
+      - ./models:/app/models
+      - claude-home:/root/.claude   # Claude-Code-Sessions/Login
+
+volumes:
+  claude-home:

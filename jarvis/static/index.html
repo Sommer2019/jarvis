@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>Jarvis</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="dot" id="status-dot"></span> Jarvis</div>
+    <div class="actions">
+      <button id="btn-handsfree" class="chip" title="Gesprächsmodus: nach jeder Antwort automatisch zuhören">Gespräch: aus</button>
+      <button id="btn-mute" class="chip" title="Vorlesen an/aus">🔊</button>
+      <button id="btn-reset" class="chip" title="Neues Gespräch">＋</button>
+    </div>
+  </header>
+
+  <main id="log" aria-live="polite"></main>
+
+  <section id="login" hidden>
+    <h2>Verbinden</h2>
+    <p>Gib deinen Jarvis-Token ein (<code>jarvis token</code> auf dem Server).</p>
+    <input id="token-input" type="password" autocomplete="current-password" placeholder="Token">
+    <button id="token-save" class="primary">Speichern</button>
+  </section>
+
+  <footer>
+    <form id="form">
+      <input id="text" type="text" placeholder="Aufgabe eintippen …" autocomplete="off" enterkeyhint="send">
+      <button id="send" type="submit" class="icon" aria-label="Senden">➤</button>
+    </form>
+    <button id="mic" class="mic" aria-label="Sprechen">
+      <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2Z"/></svg>
+    </button>
+    <div id="hint" class="hint">Tippen zum Sprechen</div>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

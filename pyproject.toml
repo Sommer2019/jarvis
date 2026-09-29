@@ -1,0 +1,39 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Persönlicher Assistent auf Basis von Claude Code (läuft über das Claude-Abo, keine API-Tokens)"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "python-dotenv>=1.0",
+    "mcp>=1.2",
+    "google-api-python-client>=2.120",
+    "google-auth-oauthlib>=1.2",
+    "python-telegram-bot>=21.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+voice = [
+    "faster-whisper>=1.0",
+    "piper-tts>=1.2",
+]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+
+[project.scripts]
+jarvis = "jarvis.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["jarvis*"]
+
+[tool.setuptools.package-data]
+jarvis = ["static/*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

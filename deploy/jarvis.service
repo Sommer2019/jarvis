@@ -1,0 +1,18 @@
+# systemd-Dienst: sudo cp deploy/jarvis.service /etc/systemd/system/ && sudo systemctl enable --now jarvis
+# Pfade/Benutzer anpassen!
+[Unit]
+Description=Jarvis – persönlicher Assistent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jarvis
+WorkingDirectory=/home/jarvis/jarvis
+EnvironmentFile=/home/jarvis/jarvis/.env
+Environment=PATH=/home/jarvis/jarvis/.venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/jarvis/jarvis/.venv/bin/jarvis serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
