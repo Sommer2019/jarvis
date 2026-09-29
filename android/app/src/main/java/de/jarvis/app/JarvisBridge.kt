@@ -1,0 +1,246 @@
+package de.jarvis.app
+
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.AlarmClock
+import android.provider.ContactsContract
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.webkit.JavascriptInterface
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+
+/**
+ * Wird der Weboberfläche als `window.JarvisAndroid` bereitgestellt.
+ * Rückmeldungen gehen an `window.JarvisNative.on…` (siehe jarvis/static/app.js).
+ */
+class JarvisBridge(private val activity: MainActivity) {
+
+    private var recognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    init {
+        tts = TextToSpeech(activity) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS
+            if (ttsReady) {
+                tts?.setLanguage(Locale.GERMANY)
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(id: String?) {}
+                    override fun onDone(id: String?) = js("onSpeakDone")
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) = js("onSpeakDone")
+                })
+            }
+        }
+    }
+
+    fun shutdown() {
+        recognizer?.destroy()
+        tts?.shutdown()
+    }
+
+    /** Ruft window.JarvisNative[name](arg) im WebView auf. */
+    private fun js(name: String, arg: String? = null) {
+        val a = if (arg == null) "" else JSONObject.quote(arg)
+        activity.webView.post {
+            activity.webView.evaluateJavascript(
+                "window.JarvisNative && window.JarvisNative.$name && window.JarvisNative.$name($a)", null)
+        }
+    }
+
+    @JavascriptInterface
+    fun version(): String = try {
+        activity.packageManager.getPackageInfo(activity.packageName, 0).versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
+    }
+
+    @JavascriptInterface
+    fun openSettings() = activity.runOnUiThread { activity.showSetup() }
+
+    // --------------------------------------------------------- Spracherkennung
+    @JavascriptInterface
+    fun startListening() = activity.runOnUiThread {
+        if (!activity.hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            activity.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), MainActivity.REQ_AUDIO)
+            js("onError", "Bitte Mikrofon-Zugriff erlauben")
+            return@runOnUiThread
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
+            js("onError", "Keine Spracherkennung auf dem Gerät (Google-App installieren)")
+            return@runOnUiThread
+        }
+        recognizer?.destroy()
+        recognizer = SpeechRecognizer.createSpeechRecognizer(activity).apply {
+            setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+                override fun onPartialResults(partial: Bundle?) {
+                    partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { js("onPartial", it) }
+                }
+                override fun onResults(results: Bundle?) {
+                    js("onResult", results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: "")
+                }
+                override fun onError(error: Int) {
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                        js("onResult", "")
+                    } else {
+                        js("onError", "Spracherkennung fehlgeschlagen (Code $error)")
+                    }
+                }
+            })
+        }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+        }
+        recognizer?.startListening(intent)
+    }
+
+    @JavascriptInterface
+    fun stopListening() = activity.runOnUiThread { recognizer?.stopListening() }
+
+    // ---------------------------------------------------------- Sprachausgabe
+    @JavascriptInterface
+    fun speak(text: String) {
+        if (!ttsReady) {
+            js("onSpeakDone")
+            return
+        }
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "jarvis-${System.currentTimeMillis()}")
+    }
+
+    @JavascriptInterface
+    fun stopSpeaking() {
+        tts?.stop()
+    }
+
+    // --------------------------------------------------------------- Aktionen
+    /** Führt eine Aktion aus der Jarvis-Warteschlange aus. true = gestartet. */
+    @JavascriptInterface
+    fun runAction(json: String): Boolean {
+        val action = JSONObject(json)
+        val p = action.optJSONObject("params") ?: JSONObject()
+        val number = p.optString("number").filter { it.isDigit() || it == '+' }
+        val intent = when (action.optString("type")) {
+            // DIAL öffnet nur die Telefon-App mit der Nummer – anrufen tippst du selbst
+            "call" -> Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number"))
+            "sms" -> Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$number")).putExtra("sms_body", p.optString("text"))
+            "whatsapp" -> Intent(Intent.ACTION_VIEW, Uri.parse(
+                "https://wa.me/${number.removePrefix("+")}?text=${Uri.encode(p.optString("text"))}"))
+            "navigate" -> Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${Uri.encode(p.optString("destination"))}"))
+            "alarm" -> Intent(AlarmClock.ACTION_SET_ALARM)
+                .putExtra(AlarmClock.EXTRA_HOUR, p.optInt("hour"))
+                .putExtra(AlarmClock.EXTRA_MINUTES, p.optInt("minute"))
+                .putExtra(AlarmClock.EXTRA_MESSAGE, p.optString("label", "Jarvis"))
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            "timer" -> Intent(AlarmClock.ACTION_SET_TIMER)
+                .putExtra(AlarmClock.EXTRA_LENGTH, p.optInt("seconds"))
+                .putExtra(AlarmClock.EXTRA_MESSAGE, p.optString("label", "Jarvis"))
+                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+            "open_url" -> Intent(Intent.ACTION_VIEW, Uri.parse(p.optString("url")))
+            else -> return false
+        }
+        return try {
+            activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (e: ActivityNotFoundException) {
+            if (action.optString("type") == "navigate") {
+                // ohne Google Maps: beliebige Karten-App
+                return try {
+                    activity.startActivity(Intent(Intent.ACTION_VIEW,
+                        Uri.parse("geo:0,0?q=${Uri.encode(p.optString("destination"))}")))
+                    true
+                } catch (e2: ActivityNotFoundException) { false }
+            }
+            false
+        }
+    }
+
+    // --------------------------------------------------------------- Kontakte
+    @JavascriptInterface
+    fun syncContacts() {
+        if (!activity.hasPermission(Manifest.permission.READ_CONTACTS)) {
+            activity.runOnUiThread {
+                activity.requestPermissions(arrayOf(Manifest.permission.READ_CONTACTS), MainActivity.REQ_CONTACTS)
+            }
+            return
+        }
+        Thread {
+            try {
+                val count = uploadContacts(readContacts())
+                activity.markContactsSynced()
+                js("onContactsSynced", count.toString())
+            } catch (e: Exception) {
+                js("onError", "Kontakte-Sync fehlgeschlagen: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun readContacts(): JSONArray {
+        data class C(val name: String, val phones: MutableSet<String> = linkedSetOf(), val emails: MutableSet<String> = linkedSetOf())
+        val byId = LinkedHashMap<Long, C>()
+        val resolver = activity.contentResolver
+
+        resolver.query(ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Phone.NUMBER), null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val name = c.getString(1) ?: continue
+                byId.getOrPut(c.getLong(0)) { C(name) }.phones.add(c.getString(2) ?: continue)
+            }
+        }
+        resolver.query(ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Email.CONTACT_ID,
+                ContactsContract.CommonDataKinds.Email.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Email.ADDRESS), null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val name = c.getString(1) ?: continue
+                byId.getOrPut(c.getLong(0)) { C(name) }.emails.add(c.getString(2) ?: continue)
+            }
+        }
+        val out = JSONArray()
+        for (c in byId.values) {
+            out.put(JSONObject()
+                .put("name", c.name)
+                .put("phones", JSONArray(c.phones.toList()))
+                .put("emails", JSONArray(c.emails.toList())))
+        }
+        return out
+    }
+
+    private fun uploadContacts(contacts: JSONArray): Int {
+        val conn = URL("${activity.serverUrl}/api/phone/contacts").openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.connectTimeout = 15000
+            conn.readTimeout = 30000
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setRequestProperty("Authorization", "Bearer ${activity.token}")
+            conn.setRequestProperty("X-Jarvis-App", version())
+            conn.outputStream.use { it.write(JSONObject().put("contacts", contacts).toString().toByteArray()) }
+            if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
+            return JSONObject(conn.inputStream.bufferedReader().readText()).optInt("saved")
+        } finally {
+            conn.disconnect()
+        }
+    }
+}

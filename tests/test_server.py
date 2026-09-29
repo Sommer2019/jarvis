@@ -34,7 +34,7 @@ def test_chat(tmp_path):
     r = c.post("/api/chat", json={"message": "Termin morgen?", "voice": True},
                headers={"Authorization": "Bearer geheim"})
     assert r.status_code == 200 and r.json()["reply"] == "ok: Termin morgen?"
-    assert brain.calls[0] == ("Termin morgen?", "web:web", True, "app-sprache")
+    assert brain.calls[0] == ("Termin morgen?", "web:web", True, "web-app-sprache")
 
 
 def test_query_token_and_reset(tmp_path):
@@ -55,3 +55,47 @@ def test_generated_token(tmp_path):
     cfg = Config(token="", data_dir=tmp_path)
     t = resolve_token(cfg)
     assert len(t) > 20 and resolve_token(cfg) == t
+
+
+def test_phone_bridge(tmp_path):
+    c, brain = make(tmp_path)
+    h = {"Authorization": "Bearer geheim", "X-Jarvis-App": "1.0"}
+    r = c.post("/api/phone/contacts", headers=h,
+               json={"contacts": [{"name": "Oma", "phones": ["+49 30 123456"]}, {"name": ""}]})
+    assert r.json() == {"saved": 1}
+    assert (tmp_path / "phone_app.json").exists()
+
+    from jarvis.phone import PhoneStore
+    item = PhoneStore(tmp_path).queue("call", {"number": "+4930123456"})
+    r = c.post("/api/chat", json={"message": "Ruf Oma an"}, headers=h)
+    assert brain.calls[-1][3] == "android-app-text"
+    assert [a["id"] for a in r.json()["actions"]] == [item["id"]]
+    assert c.post(f"/api/phone/actions/{item['id']}/done", headers=h).json() == {"ok": True}
+    assert c.get("/api/phone/actions", headers=h).json() == {"actions": []}
+
+
+def test_whatsapp_webhook(tmp_path):
+    import hashlib, hmac, json
+
+    cfg = Config(token="geheim", data_dir=tmp_path, workspace=tmp_path, whatsapp_verify_token="vt",
+                 whatsapp_app_secret="sec")
+
+    class FakeWA:
+        payloads = []
+
+        def verify_webhook(self, mode, token, challenge):
+            return challenge if (mode, token) == ("subscribe", "vt") else None
+
+        async def handle_payload(self, p):
+            self.payloads.append(p)
+
+    wa = FakeWA()
+    c = TestClient(create_app(cfg, FakeBrain(), whatsapp=wa))
+    assert c.get("/webhook/whatsapp?hub.mode=subscribe&hub.verify_token=vt&hub.challenge=123").text == "123"
+    assert c.get("/webhook/whatsapp?hub.mode=subscribe&hub.verify_token=x&hub.challenge=1").status_code == 403
+    body = json.dumps({"entry": []}).encode()
+    assert c.post("/webhook/whatsapp", content=body, headers={"X-Hub-Signature-256": "sha256=falsch"}).status_code == 401
+    sig = "sha256=" + hmac.new(b"sec", body, hashlib.sha256).hexdigest()
+    assert c.post("/webhook/whatsapp", content=body, headers={"X-Hub-Signature-256": sig,
+                                                             "Content-Type": "application/json"}).status_code == 200
+    assert wa.payloads == [{"entry": []}]

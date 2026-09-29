@@ -7,7 +7,6 @@ erscheinen dort als `mcp__google__<name>`.
 from __future__ import annotations
 
 import base64
-import functools
 import os
 import re
 from datetime import datetime, timedelta
@@ -17,12 +16,7 @@ from html import unescape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-try:  # mcp >= 2
-    from mcp.server.mcpserver import MCPServer as FastMCP
-    from mcp.server.mcpserver.exceptions import ToolError
-except ImportError:  # mcp 1.x
-    from mcp.server.fastmcp import FastMCP
-    from mcp.server.fastmcp.exceptions import ToolError
+from .mcp_common import JarvisMCP
 
 DATA = Path(os.getenv("JARVIS_DATA", Path(__file__).resolve().parent.parent / "data"))
 TOKEN_FILE = Path(os.getenv("GOOGLE_TOKEN_FILE", DATA / "google_token.json"))
@@ -30,34 +24,7 @@ TZ = os.getenv("JARVIS_TIMEZONE", "Europe/Berlin")
 ALLOW_SEND = os.getenv("JARVIS_ALLOW_SEND_EMAIL", "false").lower() in {"1", "true", "yes", "ja"}
 MAX_BODY = 15_000
 
-_server = FastMCP("google")
-
-
-class _Tools:
-    """Wie `FastMCP.tool()`, reicht aber Fehlertexte (z.B. "bitte google-auth ausführen")
-    an Claude durch, statt nur "Error executing tool" zu melden."""
-
-    def tool(self):
-        def deco(fn):
-            @functools.wraps(fn)
-            def wrapper(*args, **kwargs):
-                try:
-                    return fn(*args, **kwargs)
-                except ToolError:
-                    raise
-                except Exception as e:  # noqa: BLE001
-                    raise ToolError(f"{type(e).__name__}: {e}") from e
-
-            _server.tool()(wrapper)
-            return fn
-
-        return deco
-
-    def run(self):
-        _server.run()
-
-
-mcp = _Tools()
+mcp = JarvisMCP("google")
 
 
 # --------------------------------------------------------------------- helpers

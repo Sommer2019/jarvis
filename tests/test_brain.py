@@ -81,3 +81,14 @@ async def test_missing_binary(tmp_path):
 def test_parse_output_garbage():
     r = parse_output("kaputt", "Invalid API key", 1)
     assert r.is_error and "Invalid API key" in r.text
+
+
+async def test_phone_server_auto_enabled(brain):
+    from jarvis.phone import PhoneStore
+
+    await brain.ask("x", "web")
+    assert "mcp__phone" not in brain.allowed_tools()
+    PhoneStore(brain.cfg.data_dir).register_app({"version": "1"})
+    await brain.ask("y", "web")
+    argv = brain.calls()[1]["argv"]
+    assert "mcp__phone" in argv[argv.index("--allowedTools") + 1]

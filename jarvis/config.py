@@ -55,6 +55,23 @@ class Config:
     # Darf Jarvis Mails selbstständig abschicken? Aus = nur Entwürfe.
     allow_send_email: bool = field(default_factory=lambda: _bool("JARVIS_ALLOW_SEND_EMAIL", False))
 
+    # --- CalDAV / CardDAV (Nextcloud, iCloud, mailbox.org, Posteo, …) ------
+    caldav_url: str = field(default_factory=lambda: os.getenv("CALDAV_URL", ""))
+    carddav_url: str = field(default_factory=lambda: os.getenv("CARDDAV_URL", ""))
+
+    # --- Handy-App (Kontakte & Aktionen) ------------------------------------
+    # auto = aktiv, sobald sich die Android-App einmal verbunden hat
+    phone: str = field(default_factory=lambda: os.getenv("JARVIS_PHONE", "auto"))
+
+    # --- WhatsApp (offizielle Cloud API von Meta) ---------------------------
+    whatsapp_token: str = field(default_factory=lambda: os.getenv("WHATSAPP_TOKEN", ""))
+    whatsapp_phone_id: str = field(default_factory=lambda: os.getenv("WHATSAPP_PHONE_NUMBER_ID", ""))
+    whatsapp_verify_token: str = field(default_factory=lambda: os.getenv("WHATSAPP_VERIFY_TOKEN", ""))
+    whatsapp_app_secret: str = field(default_factory=lambda: os.getenv("WHATSAPP_APP_SECRET", ""))
+    whatsapp_allowed: list[str] = field(default_factory=lambda: _list("WHATSAPP_ALLOWED_NUMBERS"))
+    whatsapp_api_version: str = field(default_factory=lambda: os.getenv("WHATSAPP_API_VERSION", "v23.0"))
+    whatsapp_voice_reply: bool = field(default_factory=lambda: _bool("WHATSAPP_VOICE_REPLY", False))
+
     # --- Sprache (lokal, kostenlos) -----------------------------------------
     whisper_model: str = field(default_factory=lambda: os.getenv("WHISPER_MODEL", "small"))
     whisper_device: str = field(default_factory=lambda: os.getenv("WHISPER_DEVICE", "auto"))

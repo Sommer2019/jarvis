@@ -21,8 +21,16 @@ async def _serve() -> None:
     from .server import create_app
 
     brain = Brain(config)
-    app = create_app(config, brain)
     notifiers = []
+    wa = None
+    if config.whatsapp_token and config.whatsapp_phone_id:
+        from .whatsapp import WhatsApp
+
+        wa = WhatsApp(config, brain)
+        notifiers.append(wa.notify)
+        if not config.whatsapp_app_secret:
+            logging.warning("WHATSAPP_APP_SECRET fehlt – Webhook-Signaturen werden nicht geprüft!")
+    app = create_app(config, brain, whatsapp=wa)
     bot = None
     if config.telegram_token:
         from .telegram_bot import TelegramBot
@@ -99,6 +107,12 @@ def _doctor() -> int:
         check("Google-OAuth-Client vorhanden", config.google_credentials_file.exists(),
               f"JSON nach {config.google_credentials_file} legen (siehe README)")
         check("Google-Login erledigt", config.google_token_file.exists(), "jarvis google-auth")
+    if config.caldav_url or config.carddav_url:
+        check("CalDAV/CardDAV", _dav_ok(), "URL/Benutzer/App-Passwort prüfen")
+    if config.whatsapp_token:
+        check("WhatsApp konfiguriert", bool(config.whatsapp_phone_id and config.whatsapp_allowed
+                                            and config.whatsapp_verify_token),
+              "WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN, WHATSAPP_ALLOWED_NUMBERS setzen")
     check("Telegram konfiguriert", bool(config.telegram_token and config.telegram_allowed),
           "TELEGRAM_BOT_TOKEN und TELEGRAM_ALLOWED_USER_IDS setzen (optional)")
     try:
@@ -110,6 +124,20 @@ def _doctor() -> int:
     check("Sprachausgabe (Piper, optional)", tts.available(config), "PIPER_VOICE setzen (siehe README)")
     check("ffmpeg (für Telegram-Sprachantworten)", bool(shutil.which("ffmpeg")), "apt install ffmpeg")
     return 0 if ok else 1
+
+
+def _dav_ok() -> bool:
+    try:
+        from . import mcp_dav
+
+        if config.caldav_url:
+            mcp_dav.caldav_list_calendars()
+        if config.carddav_url:
+            mcp_dav.carddav().addressbooks()
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"   {type(e).__name__}: {e}")
+        return False
 
 
 def main() -> None:

@@ -7,14 +7,15 @@ import logging
 import secrets
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import stt, tts
 from .brain import Brain
 from .config import Config
+from .phone import PhoneStore
 
 log = logging.getLogger("jarvis.server")
 STATIC = Path(__file__).resolve().parent / "static"
@@ -45,10 +46,28 @@ class TTSIn(BaseModel):
     text: str
 
 
-def create_app(cfg: Config, brain: Brain | None = None) -> FastAPI:
+class PhoneContact(BaseModel):
+    name: str
+    phones: list[str] = []
+    emails: list[str] = []
+
+
+class PhoneContactsIn(BaseModel):
+    contacts: list[PhoneContact]
+
+
+def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAPI:
     brain = brain or Brain(cfg)
     token = resolve_token(cfg)
+    phone = PhoneStore(cfg.data_dir)
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
+
+    def from_app(request: Request) -> bool:
+        """Anfragen der nativen Android-App tragen den Header X-Jarvis-App."""
+        info = request.headers.get("x-jarvis-app")
+        if info:
+            phone.register_app({"version": info})
+        return bool(info)
 
     def auth(request: Request) -> None:
         given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
@@ -64,16 +83,58 @@ def create_app(cfg: Config, brain: Brain | None = None) -> FastAPI:
     async def health():
         return {"ok": True, "stt": True, "tts": tts.available(cfg)}
 
+    def channel(request: Request, voice: bool) -> str:
+        kind = "android-app" if from_app(request) else "web-app"
+        return f"{kind}-{'sprache' if voice else 'text'}"
+
     @app.post("/api/chat", dependencies=[Depends(auth)])
-    async def chat(body: ChatIn):
+    async def chat(body: ChatIn, request: Request):
         if not body.message.strip():
             raise HTTPException(400, "Leere Nachricht")
         reply = await brain.ask(body.message, conv(body.conversation), voice=body.voice,
-                                channel="app-sprache" if body.voice else "app-text")
-        return {"reply": reply.text, "error": reply.is_error}
+                                channel=channel(request, body.voice))
+        return {"reply": reply.text, "error": reply.is_error, "actions": phone.pending()}
+
+    # ------------------------------------------------------------- Handy
+    @app.post("/api/phone/contacts", dependencies=[Depends(auth)])
+    async def phone_contacts(body: PhoneContactsIn, request: Request):
+        from_app(request)
+        return {"saved": phone.save_contacts([c.model_dump() for c in body.contacts])}
+
+    @app.get("/api/phone/actions", dependencies=[Depends(auth)])
+    async def phone_actions(request: Request):
+        from_app(request)
+        return {"actions": phone.pending()}
+
+    @app.post("/api/phone/actions/{action_id}/done", dependencies=[Depends(auth)])
+    async def phone_action_done(action_id: str):
+        return {"ok": phone.done(action_id)}
+
+    # ---------------------------------------------------------- WhatsApp
+    @app.get("/webhook/whatsapp")
+    async def whatsapp_verify(request: Request):
+        q = request.query_params
+        answer = whatsapp and whatsapp.verify_webhook(q.get("hub.mode", ""), q.get("hub.verify_token", ""),
+                                                      q.get("hub.challenge", ""))
+        if not answer:
+            raise HTTPException(403, "Verifizierung fehlgeschlagen")
+        return PlainTextResponse(answer)
+
+    @app.post("/webhook/whatsapp")
+    async def whatsapp_webhook(request: Request, background: BackgroundTasks):
+        if not whatsapp:
+            raise HTTPException(404)
+        from .whatsapp import verify_signature
+
+        body = await request.body()
+        if not verify_signature(cfg.whatsapp_app_secret, body, request.headers.get("x-hub-signature-256", "")):
+            raise HTTPException(401, "Signatur ungültig")
+        # Meta erwartet schnell ein 200 – Verarbeitung im Hintergrund
+        background.add_task(whatsapp.handle_payload, await request.json())
+        return {"ok": True}
 
     @app.post("/api/voice", dependencies=[Depends(auth)])
-    async def voice(audio: UploadFile = File(...), conversation: str = Form("web")):
+    async def voice(request: Request, audio: UploadFile = File(...), conversation: str = Form("web")):
         data = await audio.read()
         suffix = Path(audio.filename or "a.webm").suffix or ".webm"
         try:
@@ -82,8 +143,8 @@ def create_app(cfg: Config, brain: Brain | None = None) -> FastAPI:
             raise HTTPException(501, str(e))
         if not text:
             return {"transcript": "", "reply": "Ich habe nichts verstanden.", "error": True}
-        reply = await brain.ask(text, conv(conversation), voice=True, channel="app-sprache")
-        return {"transcript": text, "reply": reply.text, "error": reply.is_error}
+        reply = await brain.ask(text, conv(conversation), voice=True, channel=channel(request, True))
+        return {"transcript": text, "reply": reply.text, "error": reply.is_error, "actions": phone.pending()}
 
     @app.post("/api/tts", dependencies=[Depends(auth)])
     async def speak(body: TTSIn):

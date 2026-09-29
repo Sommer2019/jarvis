@@ -22,6 +22,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import Config
+from .phone import PhoneStore
 
 log = logging.getLogger("jarvis.brain")
 
@@ -115,21 +116,45 @@ class Brain:
 
     # ------------------------------------------------------------------ setup
     def _write_mcp_config(self) -> None:
+        pkg_root = str(Path(__file__).resolve().parent.parent)
+
+        def server(module: str, **env: str) -> dict:
+            base = {"JARVIS_DATA": str(self.cfg.data_dir), "JARVIS_TIMEZONE": self.cfg.timezone,
+                    "PYTHONPATH": pkg_root}
+            return {"command": sys.executable, "args": ["-m", module], "env": {**base, **env}}
+
         servers: dict = {}
         if self.cfg.google_enabled:
-            servers["google"] = {
-                "command": sys.executable,
-                "args": ["-m", "jarvis.mcp_google"],
-                "env": {
-                    "JARVIS_DATA": str(self.cfg.data_dir),
-                    "JARVIS_TIMEZONE": self.cfg.timezone,
-                    "JARVIS_ALLOW_SEND_EMAIL": "true" if self.cfg.allow_send_email else "false",
-                    "GOOGLE_CREDENTIALS_FILE": str(self.cfg.google_credentials_file),
-                    "GOOGLE_TOKEN_FILE": str(self.cfg.google_token_file),
-                    "PYTHONPATH": str(Path(__file__).resolve().parent.parent),
-                },
-            }
+            servers["google"] = server(
+                "jarvis.mcp_google",
+                JARVIS_ALLOW_SEND_EMAIL="true" if self.cfg.allow_send_email else "false",
+                GOOGLE_CREDENTIALS_FILE=str(self.cfg.google_credentials_file),
+                GOOGLE_TOKEN_FILE=str(self.cfg.google_token_file),
+            )
+        if self.cfg.caldav_url or self.cfg.carddav_url:
+            # Zugangsdaten erbt der Unterprozess aus der Umgebung (CALDAV_*/CARDDAV_*),
+            # damit Passwörter nicht in data/mcp.json landen.
+            servers["dav"] = server("jarvis.mcp_dav")
+        if self.phone_enabled():
+            servers["phone"] = server("jarvis.mcp_phone")
+        self.mcp_servers = list(servers)
         self.mcp_config_path.write_text(json.dumps({"mcpServers": servers}, indent=2))
+
+    def phone_enabled(self) -> bool:
+        mode = self.cfg.phone.lower()
+        if mode in ("auto", ""):
+            return PhoneStore(self.cfg.data_dir).app_registered()
+        return mode in ("1", "true", "yes", "ja", "on")
+
+    def _seed_workspace(self) -> None:
+        seeds = {
+            "memory.md": "# Gedächtnis\n\n(Dauerhafte Fakten über den Nutzer – Jarvis pflegt diese Datei.)\n",
+            "todo.md": "# Aufgaben\n\n",
+        }
+        for name, content in seeds.items():
+            path = self.cfg.workspace / name
+            if not path.exists():
+                path.write_text(content)
 
     # Eingebaute Claude-Code-Tools: Gedächtnis/Notizen im Workspace + Recherche.
     # Bash ist bewusst NICHT dabei.
@@ -141,8 +166,8 @@ class Brain:
 
     def allowed_tools(self) -> list[str]:
         tools = list(self.BUILTIN_TOOLS)
-        if self.cfg.google_enabled:
-            tools.append("mcp__google")  # alle Tools des Google-MCP-Servers
+        # "mcp__<server>" erlaubt alle Tools des jeweiligen MCP-Servers
+        tools.extend(f"mcp__{name}" for name in self.mcp_servers)
         tools.extend(self.cfg.extra_tools)
         return tools
 
@@ -194,6 +219,7 @@ class Brain:
             return reply
 
     async def _run(self, prompt: str, session_id: str | None) -> Reply:
+        self._write_mcp_config()  # z.B. Handy-App kann inzwischen verbunden sein
         cmd = self.build_command(session_id)
         log.debug("Starte: %s", " ".join(cmd))
         try:

@@ -21,6 +21,10 @@
   let busy = false, listening = false;
   let serverTTS = false;
 
+  // In der nativen Android-App gibt es window.JarvisAndroid (Sprache, Kontakte, Aktionen)
+  const native = window.JarvisAndroid || null;
+  const done = new Set();
+
   // ------------------------------------------------------------------ UI
   function add(text, who, cls = "") {
     const el = document.createElement("div");
@@ -48,7 +52,11 @@
   async function api(path, opts = {}) {
     const res = await fetch(path, {
       ...opts,
-      headers: { ...(opts.headers || {}), Authorization: "Bearer " + token },
+      headers: {
+        ...(opts.headers || {}),
+        Authorization: "Bearer " + token,
+        ...(native ? { "X-Jarvis-App": native.version() } : {}),
+      },
     });
     if (res.status === 401) { showLogin(true); throw new Error("Token ungültig"); }
     if (!res.ok) throw new Error((await res.text()) || res.statusText);
@@ -68,6 +76,7 @@
       });
       const data = await res.json();
       finish(pending, data.reply, data.error, voice);
+      handleActions(data.actions);
     } catch (e) {
       finish(pending, "Fehler: " + e.message, true, false);
     }
@@ -83,9 +92,64 @@
       if (data.transcript) log.insertBefore(Object.assign(document.createElement("div"),
         { className: "msg me", textContent: data.transcript }), pending);
       finish(pending, data.reply, data.error, true);
+      handleActions(data.actions);
     } catch (e) {
       finish(pending, "Fehler: " + e.message, true, false);
     }
+  }
+
+  // ------------------------------------------------------ Handy-Aktionen
+  const ACTION_LABELS = {
+    call: (p) => `📞 ${p.number} anrufen`,
+    sms: (p) => `💬 SMS an ${p.number}`,
+    whatsapp: (p) => `🟢 WhatsApp an ${p.number}`,
+    navigate: (p) => `🧭 Navigation: ${p.destination}`,
+    alarm: (p) => `⏰ Wecker ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`,
+    timer: (p) => `⏱️ Timer ${Math.round(p.seconds / 60)} min`,
+    open_url: (p) => `🔗 ${p.url}`,
+  };
+
+  // Browser-Fallback: Links, die Android/iOS selbst öffnen können
+  function actionLink(a) {
+    const p = a.params || {};
+    const digits = (n) => String(n || "").replace(/[^\d+]/g, "");
+    switch (a.type) {
+      case "call": return "tel:" + digits(p.number);
+      case "sms": return `sms:${digits(p.number)}?body=${encodeURIComponent(p.text || "")}`;
+      case "whatsapp": return `https://wa.me/${digits(p.number).replace("+", "")}?text=${encodeURIComponent(p.text || "")}`;
+      case "navigate": return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.destination || "");
+      case "open_url": return p.url;
+      default: return null; // Wecker/Timer gehen nur in der App
+    }
+  }
+
+  async function ack(a) {
+    done.add(a.id);
+    await api(`/api/phone/actions/${a.id}/done`, { method: "POST" }).catch(() => {});
+  }
+
+  function handleActions(actions) {
+    for (const a of actions || []) {
+      if (done.has(a.id)) continue;
+      if (native) {
+        if (native.runAction(JSON.stringify(a))) { ack(a); add("✔ " + (ACTION_LABELS[a.type]?.(a.params) || a.type), "bot", "action"); }
+        continue;
+      }
+      const href = actionLink(a);
+      if (!href) { ack(a); add("Diese Aktion geht nur in der Jarvis-Android-App: " + a.type, "bot", "err"); continue; }
+      const el = document.createElement("a");
+      el.className = "msg bot action-btn";
+      el.href = href; el.target = "_blank"; el.rel = "noopener";
+      el.textContent = ACTION_LABELS[a.type]?.(a.params) || a.type;
+      el.onclick = () => ack(a);
+      log.appendChild(el);
+      done.add(a.id);
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  async function pollActions() {
+    try { handleActions((await (await api("/api/phone/actions")).json()).actions); } catch {}
   }
 
   function finish(el, text, isErr, speakIt) {
@@ -111,6 +175,11 @@
   async function speak(text) {
     setState("speaking");
     const done = () => { setState("idle"); if (handsfree) setTimeout(listen, 300); };
+    if (native) {
+      window.JarvisNative.onSpeakDone = done;
+      native.speak(text);
+      return;
+    }
     if (serverTTS) {
       try {
         const res = await api("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -133,9 +202,25 @@
 
   function listen() {
     if (busy || listening) return;
+    if (native) return listenNative();
     if ("speechSynthesis" in window) speechSynthesis.cancel();
     if (SR) return listenBrowser();
     return listenRecorder();
+  }
+
+  // Android-Spracherkennung über die App-Brücke
+  window.JarvisNative = window.JarvisNative || {};
+  function listenNative() {
+    native.stopSpeaking();
+    const live = add("…", "me", "pending");
+    const end = () => { listening = false; live.remove(); };
+    Object.assign(window.JarvisNative, {
+      onPartial: (t) => { live.textContent = t || "…"; },
+      onResult: (t) => { end(); if (t && t.trim()) send(t.trim(), true); else setState("idle"); },
+      onError: (msg) => { end(); setState("idle"); hint.textContent = msg; },
+    });
+    listening = true; setState("listening");
+    native.startListening();
   }
 
   function listenBrowser() {
@@ -209,6 +294,7 @@
   }
 
   function stopListening() {
+    if (native && listening) return native.stopListening();
     if (recognizer && listening) recognizer.stop();
     if (recorder && recorder.state === "recording") recorder.stop();
   }
@@ -220,7 +306,11 @@
     const t = $("text").value; $("text").value = "";
     send(t, false);
   });
-  $("btn-mute").onclick = () => { muted = !muted; store.set("jarvis-muted", muted ? "1" : "0"); if (muted) window.speechSynthesis?.cancel(); refreshChips(); };
+  $("btn-mute").onclick = () => {
+    muted = !muted; store.set("jarvis-muted", muted ? "1" : "0");
+    if (muted) { native ? native.stopSpeaking() : window.speechSynthesis?.cancel(); }
+    refreshChips();
+  };
   $("btn-handsfree").onclick = () => { handsfree = !handsfree; store.set("jarvis-handsfree", handsfree ? "1" : "0"); refreshChips(); setState("idle"); };
   $("btn-reset").onclick = async () => {
     await api("/api/reset", { method: "POST" }).catch(() => {});
@@ -231,6 +321,13 @@
     showLogin(false); init();
   };
 
+  if (native) {
+    const b = $("btn-settings");
+    b.hidden = false;
+    b.onclick = () => native.openSettings();
+    window.JarvisNative.onContactsSynced = (n) => add(`📇 ${n} Handy-Kontakte mit Jarvis synchronisiert.`, "bot", "action");
+  }
+
   async function init() {
     refreshChips();
     if (!token) return showLogin(true);
@@ -240,10 +337,15 @@
       setState("idle");
     } catch { setState("err"); }
     if (!log.children.length) add("Hallo! Tippe auf das Mikrofon oder schreib mir eine Aufgabe.", "bot");
+    pollActions();
     if (params.get("voice") === "1") listen();
   }
 
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // Aktionen aus Telegram/WhatsApp abholen, sobald die App wieder sichtbar ist
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && pollActions());
+  window.JarvisNative.listen = listen; // für den Launcher-Shortcut "Sprechen"
+
+  if ("serviceWorker" in navigator && !native) navigator.serviceWorker.register("/sw.js").catch(() => {});
   window.speechSynthesis?.getVoices();
   init();
 })();
