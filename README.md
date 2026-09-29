@@ -234,6 +234,7 @@ direkten Download-Link auf dem Handy erstellst du ein Release:
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
+Alternativ: **Actions → „Android-App (APK)“ → „Run workflow“** und bei „Release erstellen“ z.B. `v0.2.0` eintragen.
 Die APK hängt dann unter **Releases** und lässt sich direkt am Handy herunterladen und installieren
 („Installation aus unbekannten Quellen“ einmal erlauben).
 
