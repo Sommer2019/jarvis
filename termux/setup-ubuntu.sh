@@ -3,7 +3,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 REPO="${JARVIS_REPO:-https://github.com/Sommer2019/jarvis.git}"
-BRANCH="${JARVIS_BRANCH:-main}"
+BRANCH="${JARVIS_BRANCH:-master}"
 DIR="${JARVIS_DIR:-/root/jarvis}"
 
 say() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }

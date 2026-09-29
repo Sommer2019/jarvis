@@ -3,7 +3,7 @@
 #  Jarvis komplett auf dem Handy – Installer für Termux
 #
 #  In Termux (aus F-Droid, NICHT Play Store) ausführen:
-#    curl -fsSL https://raw.githubusercontent.com/Sommer2019/jarvis/main/termux/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/Sommer2019/jarvis/master/termux/install.sh | bash
 #  oder nach dem Klonen:  bash termux/install.sh
 #
 #  Richtet ein: Ubuntu-Umgebung (proot-distro) mit Claude Code + Jarvis,
@@ -17,7 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 CLONE_REPO="$(git -C "$HERE/.." remote get-url origin 2>/dev/null || true)"
 CLONE_BRANCH="$(git -C "$HERE/.." rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 REPO="${JARVIS_REPO:-${CLONE_REPO:-https://github.com/Sommer2019/jarvis.git}}"
-BRANCH="${JARVIS_BRANCH:-${CLONE_BRANCH:-main}}"
+BRANCH="${JARVIS_BRANCH:-${CLONE_BRANCH:-master}}"
 DISTRO=ubuntu
 ROOTFS="$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO"
 
