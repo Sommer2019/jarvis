@@ -92,3 +92,11 @@ async def test_phone_server_auto_enabled(brain):
     await brain.ask("y", "web")
     argv = brain.calls()[1]["argv"]
     assert "mcp__phone" in argv[argv.index("--allowedTools") + 1]
+
+
+async def test_github_server_when_token(brain, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "x")
+    await brain.ask("x", "web", context="[Standort: Berlin]")
+    call = brain.calls()[0]
+    assert "mcp__github" in call["argv"][call["argv"].index("--allowedTools") + 1]
+    assert "[Standort: Berlin]" in call["prompt"]

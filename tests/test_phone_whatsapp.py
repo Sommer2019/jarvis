@@ -71,3 +71,12 @@ async def test_whatsapp_allowlist_and_window(tmp_path):
     assert wa.window_open("491701")
     await wa.notify("Briefing")
     assert sent[-1] == ("491701", "Briefing")
+
+
+def test_location_store(tmp_path):
+    s = PhoneStore(tmp_path)
+    assert s.location() is None
+    s.save_location({"lat": 52.5200081, "lon": 13.4049541, "accuracy": 8.7, "address": "Berlin"})
+    loc = s.location()
+    assert loc["lat"] == 52.520008 and loc["accuracy_m"] == 8 and loc["age_minutes"] == 0
+    assert "Berlin" in PhoneStore.describe(loc) and "maps.google.com" in PhoneStore.describe(loc)

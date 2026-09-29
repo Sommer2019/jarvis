@@ -137,6 +137,8 @@ class Brain:
                 "jarvis.mcp_mail",
                 JARVIS_ALLOW_SEND_EMAIL="true" if self.cfg.allow_send_email else "false",
             )
+        if os.getenv("GITHUB_TOKEN"):
+            servers["github"] = server("jarvis.mcp_github")
         if self.cfg.caldav_url or self.cfg.carddav_url:
             # Zugangsdaten erbt der Unterprozess aus der Umgebung (CALDAV_*/CARDDAV_*),
             # damit Passwörter nicht in data/mcp.json landen.
@@ -206,10 +208,12 @@ class Brain:
         self.sessions.reset(conversation)
 
     async def ask(self, message: str, conversation: str = "web", *, voice: bool = False,
-                  channel: str | None = None) -> Reply:
+                  channel: str | None = None, context: str = "") -> Reply:
         lock = self._locks.setdefault(conversation, asyncio.Lock())
         async with lock:
             prompt = self.context_header(channel or conversation)
+            if context:
+                prompt += "\n" + context
             if voice:
                 prompt += "\n" + VOICE_HINT
             prompt += "\n\n" + message

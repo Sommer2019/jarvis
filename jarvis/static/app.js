@@ -63,16 +63,30 @@
     return res;
   }
 
+  // Standort aus der App (nur wenn in den App-Einstellungen freigegeben), max. 2,5 s warten
+  function getLocation() {
+    if (!native || !native.locationEnabled || !native.locationEnabled()) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(null), 2500);
+      window.JarvisNative.onLocation = (json) => {
+        clearTimeout(timer);
+        try { resolve(json ? JSON.parse(json) : null); } catch { resolve(null); }
+      };
+      native.requestLocation();
+    });
+  }
+
   async function send(text, voice) {
     if (!text.trim() || busy) return;
     add(text, "me");
     busy = true; setState("busy");
     const pending = add("…", "bot", "pending");
     try {
+      const location = await getLocation();
       const res = await api("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, voice }),
+        body: JSON.stringify({ message: text, voice, ...(location ? { location } : {}) }),
       });
       const data = await res.json();
       finish(pending, data.reply, data.error, voice);

@@ -42,6 +42,16 @@ async def _serve() -> None:
         await bot.start()
         notifiers.append(bot.notify)
 
+    discord_bot = None
+    if config.discord_token:
+        from .discord_bot import DiscordBot
+
+        if not config.discord_allowed:
+            logging.warning("DISCORD_ALLOWED_USER_IDS leer – schreib dem Bot per DM, er nennt dir deine ID.")
+        discord_bot = DiscordBot(config, brain)
+        await discord_bot.start()
+        notifiers.append(discord_bot.notify)
+
     scheduler = Scheduler(config, brain, notifiers)
     scheduler.start()
 
@@ -52,6 +62,8 @@ async def _serve() -> None:
         scheduler.stop()
         if bot:
             await bot.stop()
+        if discord_bot:
+            await discord_bot.stop()
 
 
 async def _chat() -> None:
@@ -116,6 +128,10 @@ def _doctor() -> int:
         check("WhatsApp konfiguriert", bool(config.whatsapp_phone_id and config.whatsapp_allowed
                                             and config.whatsapp_verify_token),
               "WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN, WHATSAPP_ALLOWED_NUMBERS setzen")
+    if os.getenv("GITHUB_TOKEN"):
+        check("GitHub", _github_ok(), "GITHUB_TOKEN prüfen (Fine-grained Token, Zugriff auf Repos)")
+    if config.discord_token:
+        check("Discord konfiguriert", bool(config.discord_allowed), "DISCORD_ALLOWED_USER_IDS setzen")
     check("Telegram konfiguriert", bool(config.telegram_token and config.telegram_allowed),
           "TELEGRAM_BOT_TOKEN und TELEGRAM_ALLOWED_USER_IDS setzen (optional)")
     try:
@@ -127,6 +143,17 @@ def _doctor() -> int:
     check("Sprachausgabe (Piper, optional)", tts.available(config), "PIPER_VOICE setzen (siehe README)")
     check("ffmpeg (für Telegram-Sprachantworten)", bool(shutil.which("ffmpeg")), "apt install ffmpeg")
     return 0 if ok else 1
+
+
+def _github_ok() -> bool:
+    try:
+        from . import mcp_github
+
+        print(f"   angemeldet als {mcp_github.me()}")
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"   {type(e).__name__}: {e}")
+        return False
 
 
 def _mail_ok() -> bool:

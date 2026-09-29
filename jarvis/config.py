@@ -50,6 +50,13 @@ class Config:
     telegram_allowed: list[str] = field(default_factory=lambda: _list("TELEGRAM_ALLOWED_USER_IDS"))
     telegram_voice_reply: bool = field(default_factory=lambda: _bool("TELEGRAM_VOICE_REPLY", True))
 
+    # --- Discord -------------------------------------------------------------
+    discord_token: str = field(default_factory=lambda: os.getenv("DISCORD_BOT_TOKEN", ""))
+    discord_allowed: list[str] = field(default_factory=lambda: _list("DISCORD_ALLOWED_USER_IDS"))
+    # Kanäle, in denen Jarvis ohne @Erwähnung antwortet (optional)
+    discord_channels: list[str] = field(default_factory=lambda: _list("DISCORD_CHANNEL_IDS"))
+    discord_voice_reply: bool = field(default_factory=lambda: _bool("DISCORD_VOICE_REPLY", False))
+
     # --- Google (Gmail + Kalender) ------------------------------------------
     google_enabled: bool = field(default_factory=lambda: _bool("GOOGLE_ENABLED", True))
     # Darf Jarvis Mails selbstständig abschicken? Aus = nur Entwürfe.

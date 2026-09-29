@@ -25,6 +25,16 @@ def phone_contacts_search(query: str, max_results: int = 10) -> list[dict]:
 
 
 @mcp.tool()
+def phone_location() -> dict:
+    """Letzter bekannter Standort des Handys (Adresse, Koordinaten, Alter in Minuten).
+    Nur verwenden, wenn der Standort für die Aufgabe relevant ist."""
+    loc = store.location()
+    if not loc:
+        return {"hinweis": "Kein Standort bekannt (in der App: Einstellungen → Standort teilen)."}
+    return loc | {"beschreibung": store.describe(loc)}
+
+
+@mcp.tool()
 def phone_call(number: str) -> dict:
     """Öffnet die Telefon-App mit dieser Nummer."""
     return {"queued": store.queue("call", {"number": number}), "note": _NOTE}

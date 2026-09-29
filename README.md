@@ -2,8 +2,9 @@
 
 Jarvis kümmert sich um **E-Mails, Kalender, Kontakte, Aufgaben und Recherche**. Du steuerst ihn
 **per Sprache oder Text vom Handy**: über die eigene **Android-App** (APK aus GitHub Actions),
-die Web-App, **WhatsApp** oder **Telegram**. In der App kann Jarvis außerdem aufs Handy
-zugreifen: Kontakte, Anrufe, SMS, WhatsApp-Nachrichten, Navigation, Wecker und Timer.
+die Web-App, **WhatsApp**, **Telegram** oder **Discord**. In der App kann Jarvis außerdem aufs
+Handy zugreifen: Kontakte, **Standort**, Anrufe, SMS, WhatsApp-Nachrichten, Navigation, Wecker und
+Timer. Dazu kommt **GitHub**: Benachrichtigungen, PRs, Reviews, CI-Status und Issues.
 
 **Läuft wahlweise komplett auf dem Handy** (Termux, ohne PC/Server, siehe
 [Jarvis komplett auf dem Handy](#jarvis-komplett-auf-dem-handy)) oder auf einem Rechner zu Hause.
@@ -18,6 +19,7 @@ Telegram kosten ebenfalls nichts.
  Android-App ─(Sprache/Text, Kontakte, Aktionen)─┐
  WhatsApp ─(Sprachnachricht/Text)────────────────┤
  Telegram ─(Sprachnachricht/Text)────────────────┤
+ Discord  ─(DM/@Erwähnung, Sprachnachricht)──────┤
                                                  ▼
                      ┌──────────────────────────────┐
                      │  jarvis serve                │  (dein PC / Raspberry Pi / Server)
@@ -32,8 +34,9 @@ Telegram kosten ebenfalls nichts.
                                     ▼
    MCP-Server (eigener Code):  google = Gmail + Google Kalender
                                mail   = E-Mail per IMAP/SMTP (jeder Anbieter)
+                               github = Benachrichtigungen, Issues, PRs, CI
                                dav    = CalDAV-Kalender + CardDAV-Kontakte
-                               phone  = Handy-Kontakte + Aktionen (über die App)
+                               phone  = Handy-Kontakte, Standort, Aktionen (über die App)
    + Web-Suche + Gedächtnis-Dateien (workspace/)
 ```
 
@@ -44,6 +47,8 @@ Telegram kosten ebenfalls nichts.
 | **E-Mail** (Gmail + jeder IMAP-Anbieter) | „Was ist heute Wichtiges reingekommen?“ · „Antworte Max, dass ich Donnerstag kann“ (erstellt einen Entwurf und fragt vor dem Senden) · „Archivier alle Newsletter von gestern“ |
 | **Kalender** (Google und/oder CalDAV) | „Was steht morgen an?“ · „Trag Freitag 14 Uhr Zahnarzt ein“ · „Wann habe ich nächste Woche 2 Stunden frei?“ |
 | **Kontakte** (CardDAV + Handy) | „Wie ist die Nummer von Lena?“ · „Wer hat nächste Woche Geburtstag?“ · „Speicher Max' neue Mail max@firma.de“ |
+| **Standort** (in der App) | „Wo ist die nächste Apotheke?“ · „Wie wird das Wetter hier?“ · „Wie lange brauche ich von hier nach Hause?“ |
+| **GitHub** | „Was ist auf GitHub los?“ · „Ist der Build von jarvis grün?“ · „Welche Reviews warten auf mich?“ · „Leg ein Issue an: Login-Button ist kaputt“ |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
 | **Erinnerungen / To-dos** | „Erinnere mich morgen um 9 an die Steuer“ (legt einen Kalendertermin mit Alarm an und notiert es in `todo.md`) |
 | **Gedächtnis** | „Merk dir, dass meine Schwester Lena heißt“ (landet in `workspace/memory.md`) |
@@ -150,6 +155,16 @@ Nutze ein **App-Passwort**, nicht dein Hauptpasswort. Bei iCloud geht das unter 
 „App-spezifische Passwörter“. Google und CalDAV kannst du auch parallel nutzen, dann prüft Jarvis
 beide Kalender.
 
+### 3c. GitHub (optional)
+
+1. Unter <https://github.com/settings/personal-access-tokens> einen **Fine-grained token** anlegen.
+2. Unter „Repository access“ die gewünschten Repos oder „All repositories“ wählen.
+3. Rechte vergeben: *Contents*, *Metadata*, *Pull requests*, *Issues*, *Actions* und *Commit statuses*
+   jeweils auf „Read“. Soll Jarvis Issues anlegen und kommentieren, *Issues*/*Pull requests* auf
+   „Read and write“. Für die Benachrichtigungen brauchst du zusätzlich einen **klassischen** Token
+   mit Scope `notifications`, denn Fine-grained Tokens können keine Benachrichtigungen lesen.
+4. In `.env` eintragen: `GITHUB_TOKEN=…`. Mit `GITHUB_READONLY=true` kann Jarvis nur lesen.
+
 ### 4. Prüfen und starten
 
 ```bash
@@ -239,6 +254,12 @@ Setzt du dort das Häkchen „Handy-Kontakte teilen“, lädt die App deine Kont
 auf **deinen eigenen** Jarvis-Server (`data/phone_contacts.json`). Sie gehen nirgendwo anders hin.
 Über ⚙ oben rechts kommst du jederzeit wieder in die Einstellungen.
 
+**Standort:** Setzt du in den App-Einstellungen das Häkchen „Standort mit Jarvis teilen“, schickt die
+App bei jeder Anfrage deinen aktuellen Ort mit. Die Adresse wird auf dem Handy selbst ermittelt, ohne
+Google-Dienste. Die Daten gehen nur an deinen Jarvis-Server, dort wird nur der letzte Standort
+gespeichert (`data/phone_location.json`). Den nutzt Jarvis auch, wenn du ihn über Telegram oder
+Discord fragst („Wo bin ich gerade?“). Ohne Häkchen wird kein Standort übertragen.
+
 **Wie Handy-Aktionen funktionieren:** Jarvis legt eine Aktion in eine Warteschlange, und die App
 führt sie aus. Kommt die Anfrage aus der App, passiert das sofort. Kommt sie über Telegram oder
 WhatsApp, passiert es beim nächsten Öffnen der App (nach 10 Minuten verfällt die Aktion).
@@ -288,6 +309,19 @@ curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thors
 curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
 ```
 Danach in `.env` eintragen: `PIPER_VOICE=models/de_DE-thorsten-high.onnx`
+
+### Variante B2: Discord
+
+1. Unter <https://discord.com/developers/applications> **New Application** anlegen, dann unter **Bot**
+   den Token kopieren (`DISCORD_BOT_TOKEN`) und **Message Content Intent** einschalten.
+2. Unter **OAuth2 → URL Generator** Scope `bot` und die Rechte *Send Messages*, *Read Message History*
+   und *Attach Files* wählen. Über den Link lädst du den Bot auf deinen Server ein.
+3. Schreib dem Bot eine Direktnachricht. Er nennt dir deine ID, die trägst du als
+   `DISCORD_ALLOWED_USER_IDS` ein und startest Jarvis neu.
+
+Jarvis antwortet in Direktnachrichten, wenn du ihn mit **@Jarvis** erwähnst, und in Kanälen aus
+`DISCORD_CHANNEL_IDS` auch ohne Erwähnung. **Sprachnachrichten** aus der Discord-App versteht er
+ebenfalls. `!neu` startet ein neues Gespräch. Briefing und Hinweise kommen dann auch als Discord-DM.
 
 ### Variante C: WhatsApp
 
@@ -352,8 +386,8 @@ wie ein Anruf an und kostet nichts.
 ## Routinen
 
 In `.env`:
-- `JARVIS_BRIEFING_TIME=07:30`: jeden Morgen Termine, wichtige Mails und To-dos per Telegram, ntfy
-  bzw. WhatsApp (dort nur, wenn das 24-Stunden-Fenster offen ist).
+- `JARVIS_BRIEFING_TIME=07:30`: jeden Morgen Termine, wichtige Mails und To-dos per Telegram, ntfy,
+  Discord bzw. WhatsApp (dort nur, wenn das 24-Stunden-Fenster offen ist).
 - `JARVIS_INBOX_CHECK_MINUTES=60`: prüft stündlich den Posteingang und meldet sich nur bei
   Wichtigem. In den Ruhezeiten (`JARVIS_QUIET_HOURS=22-7`) prüft Jarvis nicht.
 - `NTFY_URL=https://ntfy.sh/ein-langes-geheimes-topic`: Push über die kostenlose ntfy-App,
@@ -403,6 +437,8 @@ jarvis/
   mcp_phone.py      MCP-Server: Handy-Kontakte + Aktionen (über die App)
   phone.py          Warteschlange/Kontakte-Speicher für die App
   whatsapp.py       WhatsApp Cloud API (Webhook, Sprachnachrichten)
+  discord_bot.py    Discord-Bot (DM, @Erwähnung, Sprachnachrichten)
+  mcp_github.py     MCP-Server: GitHub (Benachrichtigungen, PRs, Issues, CI)
   server.py         FastAPI: /api/chat, /api/voice, /api/tts + PWA
   telegram_bot.py   Telegram: Text & Sprachnachrichten
   scheduler.py      Morgen-Briefing, Posteingangs-Wächter

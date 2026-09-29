@@ -36,6 +36,7 @@ class PhoneStore:
         self.contacts_file = self.dir / "phone_contacts.json"
         self.actions_file = self.dir / "phone_actions.json"
         self.app_file = self.dir / "phone_app.json"
+        self.location_file = self.dir / "phone_location.json"
 
     # ---------------------------------------------------------------- app
     def register_app(self, info: dict) -> None:
@@ -80,6 +81,34 @@ class PhoneStore:
             if hit:
                 out.append(c)
         return out[:limit]
+
+    # ----------------------------------------------------------- Standort
+    def save_location(self, loc: dict) -> dict:
+        clean = {
+            "lat": round(float(loc["lat"]), 6),
+            "lon": round(float(loc["lon"]), 6),
+            "accuracy_m": int(float(loc.get("accuracy") or loc.get("accuracy_m") or 0)),
+            "address": str(loc.get("address") or "")[:200],
+            "time": int(loc.get("time") or time.time()),
+        }
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.location_file.write_text(json.dumps(clean, ensure_ascii=False))
+        return clean
+
+    def location(self) -> dict | None:
+        if not self.location_file.exists():
+            return None
+        loc = json.loads(self.location_file.read_text())
+        loc["age_minutes"] = int((time.time() - loc["time"]) / 60)
+        return loc
+
+    @staticmethod
+    def describe(loc: dict) -> str:
+        where = loc.get("address") or "unbekannte Adresse"
+        age = loc.get("age_minutes", 0)
+        when = "gerade eben" if age < 2 else f"vor {age} Min."
+        return (f"{where} ({loc['lat']}, {loc['lon']}, ±{loc['accuracy_m']} m, {when}, "
+                f"Karte: https://maps.google.com/?q={loc['lat']},{loc['lon']})")
 
     # ------------------------------------------------------------ actions
     @contextmanager

@@ -9,8 +9,9 @@ class FakeBrain:
     def __init__(self):
         self.calls = []
 
-    async def ask(self, message, conversation="web", *, voice=False, channel=None):
+    async def ask(self, message, conversation="web", *, voice=False, channel=None, context=""):
         self.calls.append((message, conversation, voice, channel))
+        self.context = context
         return Reply("ok: " + message, "sid")
 
     def reset(self, conversation):
@@ -99,3 +100,18 @@ def test_whatsapp_webhook(tmp_path):
     assert c.post("/webhook/whatsapp", content=body, headers={"X-Hub-Signature-256": sig,
                                                              "Content-Type": "application/json"}).status_code == 200
     assert wa.payloads == [{"entry": []}]
+
+
+def test_location_in_chat(tmp_path):
+    c, brain = make(tmp_path)
+    h = {"Authorization": "Bearer geheim", "X-Jarvis-App": "1.0"}
+    r = c.post("/api/chat", headers=h, json={"message": "Wo ist die nächste Apotheke?",
+               "location": {"lat": 52.520008, "lon": 13.404954, "accuracy": 12.5, "address": "Alexanderplatz, Berlin"}})
+    assert r.status_code == 200
+    assert "Alexanderplatz, Berlin" in brain.context and "52.520008" in brain.context
+    c.post("/api/chat", headers=h, json={"message": "Hallo"})
+    assert brain.context == ""  # ohne Standort kein Kontext
+    from jarvis.phone import PhoneStore
+    assert PhoneStore(tmp_path).location()["address"] == "Alexanderplatz, Berlin"
+    r = c.post("/api/phone/location", headers=h, json={"lat": 48.1, "lon": 11.5})
+    assert r.json()["lat"] == 48.1

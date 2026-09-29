@@ -36,10 +36,19 @@ def resolve_token(cfg: Config) -> str:
     return token
 
 
+class LocationIn(BaseModel):
+    lat: float
+    lon: float
+    accuracy: float = 0
+    address: str = ""
+    time: int | None = None  # Unix-Sekunden
+
+
 class ChatIn(BaseModel):
     message: str
     voice: bool = False
     conversation: str = "web"
+    location: LocationIn | None = None
 
 
 class TTSIn(BaseModel):
@@ -87,12 +96,19 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
         kind = "android-app" if from_app(request) else "web-app"
         return f"{kind}-{'sprache' if voice else 'text'}"
 
+    def location_context(loc: LocationIn | None) -> str:
+        if loc is None:
+            return ""
+        saved = phone.save_location(loc.model_dump())
+        saved["age_minutes"] = 0
+        return "[Standort des Nutzers: " + PhoneStore.describe(saved) + " – nur nutzen, wenn relevant]"
+
     @app.post("/api/chat", dependencies=[Depends(auth)])
     async def chat(body: ChatIn, request: Request):
         if not body.message.strip():
             raise HTTPException(400, "Leere Nachricht")
         reply = await brain.ask(body.message, conv(body.conversation), voice=body.voice,
-                                channel=channel(request, body.voice))
+                                channel=channel(request, body.voice), context=location_context(body.location))
         return {"reply": reply.text, "error": reply.is_error, "actions": phone.pending()}
 
     # ------------------------------------------------------------- Handy
@@ -100,6 +116,11 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
     async def phone_contacts(body: PhoneContactsIn, request: Request):
         from_app(request)
         return {"saved": phone.save_contacts([c.model_dump() for c in body.contacts])}
+
+    @app.post("/api/phone/location", dependencies=[Depends(auth)])
+    async def phone_location(body: LocationIn, request: Request):
+        from_app(request)
+        return phone.save_location(body.model_dump())
 
     @app.get("/api/phone/actions", dependencies=[Depends(auth)])
     async def phone_actions(request: Request):

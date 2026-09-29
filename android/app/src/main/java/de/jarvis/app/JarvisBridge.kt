@@ -1,9 +1,14 @@
 package de.jarvis.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.location.Geocoder
+import android.location.Location
+import android.location.LocationManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.AlarmClock
 import android.provider.ContactsContract
@@ -171,6 +176,70 @@ class JarvisBridge(private val activity: MainActivity) {
             }
             false
         }
+    }
+
+    // --------------------------------------------------------------- Standort
+    @JavascriptInterface
+    fun locationEnabled(): Boolean = activity.shareLocation &&
+        (activity.hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            activity.hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION))
+
+    /**
+     * Ermittelt den aktuellen Standort (ohne Google-Play-Dienste) und löst ihn auf dem
+     * Gerät in eine Adresse auf. Ergebnis → window.JarvisNative.onLocation(json | "").
+     */
+    @SuppressLint("MissingPermission") // geprüft in locationEnabled()
+    @JavascriptInterface
+    fun requestLocation() {
+        if (!locationEnabled()) {
+            js("onLocation", "")
+            return
+        }
+        val lm = activity.getSystemService(LocationManager::class.java)
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+            .filter { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
+        val last = providers.mapNotNull { p -> runCatching { lm.getLastKnownLocation(p) }.getOrNull() }
+            .maxByOrNull { it.time }
+        // frisch genug (< 2 Min.)? → sofort verwenden
+        if (last != null && System.currentTimeMillis() - last.time < 120_000) {
+            deliverLocation(last)
+            return
+        }
+        val provider = providers.firstOrNull { it != LocationManager.PASSIVE_PROVIDER }
+        if (provider == null || Build.VERSION.SDK_INT < 30) {
+            if (last != null) deliverLocation(last) else js("onLocation", "")
+            return
+        }
+        try {
+            lm.getCurrentLocation(provider, null, activity.mainExecutor) { loc ->
+                val best = loc ?: last
+                if (best != null) deliverLocation(best) else js("onLocation", "")
+            }
+        } catch (e: SecurityException) {
+            js("onLocation", "")
+        }
+    }
+
+    private fun deliverLocation(loc: Location) {
+        Thread {
+            val address = try {
+                @Suppress("DEPRECATION")
+                Geocoder(activity, Locale.GERMANY).getFromLocation(loc.latitude, loc.longitude, 1)
+                    ?.firstOrNull()?.let { a ->
+                        listOfNotNull(
+                            listOfNotNull(a.thoroughfare, a.subThoroughfare).joinToString(" ").ifBlank { null },
+                            listOfNotNull(a.postalCode, a.locality).joinToString(" ").ifBlank { null },
+                        ).joinToString(", ")
+                    } ?: ""
+            } catch (e: Exception) { "" }
+            js("onLocation", JSONObject()
+                .put("lat", loc.latitude)
+                .put("lon", loc.longitude)
+                .put("accuracy", loc.accuracy.toDouble())
+                .put("address", address)
+                .put("time", loc.time / 1000)
+                .toString())
+        }.start()
     }
 
     // --------------------------------------------------------------- Kontakte

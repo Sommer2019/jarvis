@@ -35,6 +35,7 @@ class MainActivity : Activity() {
         const val REQ_AUDIO = 1
         const val REQ_CONTACTS = 2
         const val REQ_TERMUX = 3
+        const val REQ_LOCATION = 4
         const val PREFS = "jarvis"
         const val LOCAL_URL = "http://127.0.0.1:8080"
         const val TERMUX = "com.termux"
@@ -53,6 +54,7 @@ class MainActivity : Activity() {
     val token: String get() = prefs.getString("token", "")!!
     val shareContacts: Boolean get() = prefs.getBoolean("share_contacts", false)
     val localMode: Boolean get() = prefs.getBoolean("local_mode", false)
+    val shareLocation: Boolean get() = prefs.getBoolean("share_location", false)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -159,6 +161,11 @@ class MainActivity : Activity() {
         layout.addView(TextView(this).apply { text = "Token" })
         layout.addView(tokenField)
         layout.addView(contactsBox)
+        val locationBox = CheckBox(this).apply {
+            text = "Standort mit Jarvis teilen (bei jeder Anfrage aus der App)"
+            isChecked = shareLocation
+        }
+        layout.addView(locationBox)
 
         AlertDialog.Builder(this)
             .setTitle("Jarvis verbinden")
@@ -187,8 +194,13 @@ class MainActivity : Activity() {
                     .putString("server_url", url)
                     .putString("token", tokenField.text.toString().trim())
                     .putBoolean("share_contacts", contactsBox.isChecked)
+                    .putBoolean("share_location", locationBox.isChecked)
                     .putLong("contacts_synced", 0)
                     .apply()
+                if (locationBox.isChecked && !hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
+                }
                 if (url.isEmpty()) showSetup("Bitte eine Server-Adresse eingeben.") else loadApp()
             }
             .show()
@@ -281,6 +293,8 @@ class MainActivity : Activity() {
             REQ_CONTACTS -> if (granted) bridge.syncContacts()
             else Toast.makeText(this, "Ohne Kontakt-Zugriff kann Jarvis deine Handy-Kontakte nicht nutzen.", Toast.LENGTH_LONG).show()
             REQ_TERMUX -> if (granted && localMode) loadApp()
+            REQ_LOCATION -> if (!granted && !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION))
+                Toast.makeText(this, "Ohne Standort-Freigabe kann Jarvis deinen Ort nicht nutzen.", Toast.LENGTH_LONG).show()
             REQ_AUDIO -> if (!granted) Toast.makeText(this, "Ohne Mikrofon keine Sprachsteuerung.", Toast.LENGTH_LONG).show()
         }
     }
