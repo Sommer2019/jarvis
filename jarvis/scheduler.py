@@ -24,11 +24,12 @@ NOTHING = "NICHTS"
 
 BRIEFING_PROMPT = """Erstelle mein Morgen-Briefing:
 1. Heutige und morgige Termine (mit Uhrzeit, Ort, ggf. Vorbereitung).
-2. Wichtige ungelesene Mails der letzten 24h (in:inbox is:unread newer_than:1d) – kurz, mit Handlungsbedarf.
+2. Wichtige ungelesene Mails der letzten 24h aus allen Mailkonten – kurz, mit Handlungsbedarf.
 3. Offene Punkte aus meinen Notizen (todo.md), falls vorhanden.
 Halte es kompakt und gut auf dem Handy lesbar."""
 
-INBOX_PROMPT = f"""Prüfe meinen Posteingang auf neue ungelesene Mails seit {{since}} (Gmail-Suche z.B. 'in:inbox is:unread after:{{epoch}}').
+INBOX_PROMPT = f"""Prüfe alle meine Mailkonten auf neue ungelesene Mails seit {{since}}
+(Gmail: 'in:inbox is:unread after:{{epoch}}'; IMAP: mail_search mit unread=True, since_days=1, pro Konto).
 Melde dich NUR bei wirklich Wichtigem (persönliche Mails von echten Menschen, Fristen, Rechnungen, Termine, Sicherheitswarnungen).
 Newsletter, Werbung und Benachrichtigungen ignorierst du.
 Wenn es nichts Wichtiges gibt, antworte exakt mit: {NOTHING}
@@ -126,7 +127,7 @@ class Scheduler:
         if hhmm:
             self._tasks.append(asyncio.create_task(self._daily_loop(hhmm)))
             log.info("Morgen-Briefing täglich um %02d:%02d", *hhmm)
-        if self.cfg.inbox_check_minutes > 0 and self.cfg.google_enabled:
+        if self.cfg.inbox_check_minutes > 0:
             self._tasks.append(asyncio.create_task(self._interval_loop(self.cfg.inbox_check_minutes)))
             log.info("Posteingang-Check alle %d Minuten", self.cfg.inbox_check_minutes)
 

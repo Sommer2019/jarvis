@@ -131,6 +131,12 @@ class Brain:
                 GOOGLE_CREDENTIALS_FILE=str(self.cfg.google_credentials_file),
                 GOOGLE_TOKEN_FILE=str(self.cfg.google_token_file),
             )
+        if os.getenv("IMAP_HOST") or (self.cfg.data_dir / "mail_accounts.json").exists():
+            # IMAP/SMTP-Zugangsdaten erbt der Unterprozess aus der Umgebung
+            servers["mail"] = server(
+                "jarvis.mcp_mail",
+                JARVIS_ALLOW_SEND_EMAIL="true" if self.cfg.allow_send_email else "false",
+            )
         if self.cfg.caldav_url or self.cfg.carddav_url:
             # Zugangsdaten erbt der Unterprozess aus der Umgebung (CALDAV_*/CARDDAV_*),
             # damit Passwörter nicht in data/mcp.json landen.

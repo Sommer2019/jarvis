@@ -107,6 +107,9 @@ def _doctor() -> int:
         check("Google-OAuth-Client vorhanden", config.google_credentials_file.exists(),
               f"JSON nach {config.google_credentials_file} legen (siehe README)")
         check("Google-Login erledigt", config.google_token_file.exists(), "jarvis google-auth")
+    from . import mcp_mail
+    if mcp_mail.configured():
+        check("Mailkonten (IMAP)", _mail_ok(), "IMAP-Server/Benutzer/App-Passwort prüfen")
     if config.caldav_url or config.carddav_url:
         check("CalDAV/CardDAV", _dav_ok(), "URL/Benutzer/App-Passwort prüfen")
     if config.whatsapp_token:
@@ -124,6 +127,20 @@ def _doctor() -> int:
     check("Sprachausgabe (Piper, optional)", tts.available(config), "PIPER_VOICE setzen (siehe README)")
     check("ffmpeg (für Telegram-Sprachantworten)", bool(shutil.which("ffmpeg")), "apt install ffmpeg")
     return 0 if ok else 1
+
+
+def _mail_ok() -> bool:
+    from . import mcp_mail
+
+    ok = True
+    for acc in mcp_mail.accounts().values():
+        try:
+            with mcp_mail.imap(acc):
+                print(f"   ✓ {acc.name} ({acc.username})")
+        except Exception as e:  # noqa: BLE001
+            print(f"   ✗ {acc.name}: {type(e).__name__}: {e}")
+            ok = False
+    return ok
 
 
 def _dav_ok() -> bool:

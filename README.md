@@ -5,6 +5,9 @@ Jarvis kümmert sich um **E-Mails, Kalender, Kontakte, Aufgaben und Recherche**.
 die Web-App, **WhatsApp** oder **Telegram**. In der App kann Jarvis außerdem aufs Handy
 zugreifen: Kontakte, Anrufe, SMS, WhatsApp-Nachrichten, Navigation, Wecker und Timer.
 
+**Läuft wahlweise komplett auf dem Handy** (Termux, ohne PC/Server, siehe
+[Jarvis komplett auf dem Handy](#jarvis-komplett-auf-dem-handy)) oder auf einem Rechner zu Hause.
+
 **Kosten: nur dein normales Claude-Abo (Pro oder Max).** Jarvis nutzt keine API-Tokens.
 Das „Gehirn“ ist die offizielle Claude-Code-CLI im Headless-Modus (`claude -p`), und die
 meldet sich mit deinem Abo-Login an. Spracherkennung (Whisper) und Sprachausgabe (Piper
@@ -28,6 +31,7 @@ Telegram kosten ebenfalls nichts.
                       claude -p  (Claude-Abo via OAuth)
                                     ▼
    MCP-Server (eigener Code):  google = Gmail + Google Kalender
+                               mail   = E-Mail per IMAP/SMTP (jeder Anbieter)
                                dav    = CalDAV-Kalender + CardDAV-Kontakte
                                phone  = Handy-Kontakte + Aktionen (über die App)
    + Web-Suche + Gedächtnis-Dateien (workspace/)
@@ -37,7 +41,7 @@ Telegram kosten ebenfalls nichts.
 
 | Bereich | Beispiele |
 |---|---|
-| **E-Mail** | „Was ist heute Wichtiges reingekommen?“ · „Antworte Max, dass ich Donnerstag kann“ (erstellt einen Entwurf und fragt vor dem Senden) · „Archivier alle Newsletter von gestern“ |
+| **E-Mail** (Gmail + jeder IMAP-Anbieter) | „Was ist heute Wichtiges reingekommen?“ · „Antworte Max, dass ich Donnerstag kann“ (erstellt einen Entwurf und fragt vor dem Senden) · „Archivier alle Newsletter von gestern“ |
 | **Kalender** (Google und/oder CalDAV) | „Was steht morgen an?“ · „Trag Freitag 14 Uhr Zahnarzt ein“ · „Wann habe ich nächste Woche 2 Stunden frei?“ |
 | **Kontakte** (CardDAV + Handy) | „Wie ist die Nummer von Lena?“ · „Wer hat nächste Woche Geburtstag?“ · „Speicher Max' neue Mail max@firma.de“ |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
@@ -100,6 +104,35 @@ Nutzt du kein Google, setz `GOOGLE_ENABLED=false` und nimm CalDAV (Schritt 3b).
    verbinde dich vorher mit `ssh -L 8765:localhost:8765 dein-server`. Du kannst `jarvis google-auth`
    auch am PC ausführen und danach `data/google_token.json` auf den Server kopieren.
 
+### 3a. E-Mail bei anderen Anbietern (IMAP/SMTP)
+
+Trag in `.env` die Werte deines Anbieters ein. Nutze wenn möglich ein **App-Passwort**:
+
+| Anbieter | `IMAP_HOST` | `SMTP_HOST` : `SMTP_PORT` | Hinweis |
+|---|---|---|---|
+| GMX | `imap.gmx.net` | `mail.gmx.net` : 587 | IMAP in den GMX-Einstellungen erlauben |
+| Web.de | `imap.web.de` | `smtp.web.de` : 587 | IMAP in den Web.de-Einstellungen erlauben |
+| T-Online | `secureimap.t-online.de` | `securesmtp.t-online.de` : 465 | E-Mail-Passwort im Kundencenter setzen |
+| Outlook/Hotmail | `outlook.office365.com` | `smtp.office365.com` : 587 | App-Kennwort nötig (2FA an) |
+| iCloud | `imap.mail.me.com` | `smtp.mail.me.com` : 587 | App-spezifisches Passwort |
+| Yahoo | `imap.mail.yahoo.com` | `smtp.mail.yahoo.com` : 465 | App-Passwort |
+| Posteo | `posteo.de` | `posteo.de` : 465 | |
+| mailbox.org | `imap.mailbox.org` | `smtp.mailbox.org` : 465 | |
+| Gmail per IMAP | `imap.gmail.com` | `smtp.gmail.com` : 465 | App-Passwort (Alternative zu Schritt 3) |
+
+**Mehrere Konten:** Leg zusätzlich `data/mail_accounts.json` an:
+```json
+[
+  {"name": "gmx", "imap_host": "imap.gmx.net", "username": "ich@gmx.de", "password": "…",
+   "smtp_host": "mail.gmx.net", "smtp_port": 587, "from_name": "Robin"},
+  {"name": "arbeit", "imap_host": "outlook.office365.com", "username": "robin@firma.de", "password": "…",
+   "smtp_host": "smtp.office365.com", "smtp_port": 587}
+]
+```
+Jarvis prüft dann alle Konten („Was ist neu?“) und antwortet jeweils vom richtigen Konto. Entwürfe
+landen im Entwürfe-Ordner des Kontos, du siehst sie also in jeder Mail-App. Senden ist wie bei
+Gmail nur mit `JARVIS_ALLOW_SEND_EMAIL=true` möglich.
+
 ### 3b. Kalender und Kontakte per CalDAV/CardDAV (optional)
 
 Das funktioniert mit Nextcloud, iCloud, mailbox.org, Posteo, Fastmail, Synology, Baïkal, Radicale usw.
@@ -124,6 +157,50 @@ jarvis doctor     # prüft Claude-Login, Google, Sprache, Telegram
 jarvis chat       # erster Test im Terminal
 jarvis serve      # startet Web-App, Telegram-Bot und Routinen
 ```
+
+---
+
+## Jarvis komplett auf dem Handy
+
+Kein PC und kein Server nötig: Jarvis und Claude Code laufen direkt auf deinem Android-Handy,
+und die Jarvis-App startet und steuert sie.
+
+**Warum steckt das nicht komplett in der APK?** Ohne API-Kosten, also nur über dein Abo, darf
+ausschließlich die offizielle **Claude-Code-CLI** mit Claude sprechen. Eine App, die Claude direkt
+mit deinem Abo-Login aufruft, verstößt gegen die Nutzungsbedingungen von Anthropic und wird
+gesperrt. Die CLI ist aber ein Linux-Programm, deshalb läuft sie in **Termux** mit einer kleinen
+Ubuntu-Umgebung. Die APK ist dein Frontend und startet alles automatisch.
+
+**Einrichtung (einmalig, ca. 15 Minuten, ca. 1,5 GB Speicher):**
+1. **Termux** aus **F-Droid** installieren (<https://f-droid.org/packages/com.termux/>). Die
+   Play-Store-Version ist veraltet. Optional dazu **Termux:API** (Token in die Zwischenablage) und
+   **Termux:Boot** (Autostart nach Neustart), beide ebenfalls aus F-Droid.
+2. In Termux:
+   ```bash
+   pkg install -y git && git clone https://github.com/Sommer2019/jarvis.git && bash jarvis/termux/install.sh
+   ```
+   Das Skript richtet die Ubuntu-Umgebung, Claude Code und Jarvis ein. Zwischendurch meldest du dich
+   einmal mit deinem Claude-Abo an: den Link antippen, einloggen und den Token einfügen.
+   Ist das Repo privat, verwende `https://<github-token>@github.com/…` als Adresse. Liegt die aktuelle
+   Version nicht auf `main`, setz vorher `export JARVIS_BRANCH=<branch>`.
+3. **Jarvis-App** (APK) öffnen, „Jarvis läuft auf diesem Handy“ ankreuzen und den Token einfügen
+   (er liegt in der Zwischenablage oder steht am Ende der Installation).
+4. In den Android-Einstellungen der Jarvis-App die Berechtigung **„Befehle in Termux ausführen“**
+   erlauben. Dann startet die App Jarvis selbst, wenn er nicht läuft.
+5. Android → Apps → **Termux → Akku → „Nicht einschränken“**. Sonst beendet Android Jarvis im
+   Hintergrund, und Routinen wie das Morgen-Briefing laufen nicht.
+
+**Einstellungen ändern** (Mail, Kalender, Telegram …): In Termux `~/jarvis-shell.sh` ausführen,
+dann `nano .env`, danach `~/jarvis-stop.sh && ~/jarvis-start.sh`. **Updates:** `~/jarvis-update.sh`.
+
+Gut zu wissen:
+- Die Spracherkennung macht Android selbst; Whisper ist auf dem Handy nicht nötig.
+- Telegram funktioniert auch vom Handy aus, auf dem Jarvis läuft. Das ist praktisch für
+  Push-Nachrichten wie das Briefing.
+- Für WhatsApp braucht Meta eine öffentlich erreichbare Adresse. Das geht auf dem Handy nur mit
+  Tailscale Funnel und ist dort eher unpraktisch; dafür ist ein Rechner zu Hause besser.
+- Der Akkuverbrauch ist gering, solange du Jarvis nicht benutzt. Häufige Routinen wie der
+  Mail-Check alle 15 Minuten kosten aber spürbar Akku.
 
 ---
 
@@ -155,7 +232,8 @@ Trag die angezeigten vier Werte als GitHub-Secrets ein (Repo → Settings → Se
 Actions): `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` und
 `ANDROID_KEY_PASSWORD`. Bewahre die `.jks`-Datei gut auf.
 
-**Einrichten:** Beim ersten Start fragt die App nach der Server-Adresse (z.B.
+**Einrichten:** Läuft Jarvis auf dem Handy selbst, kreuzt du „Jarvis läuft auf diesem Handy“ an
+(siehe [oben](#jarvis-komplett-auf-dem-handy)). Sonst fragt die App beim ersten Start nach der Server-Adresse (z.B.
 `https://jarvis.dein-tailnet.ts.net`, siehe Tailscale unten) und dem Token (`jarvis token`).
 Setzt du dort das Häkchen „Handy-Kontakte teilen“, lädt die App deine Kontakte etwa alle 12 Stunden
 auf **deinen eigenen** Jarvis-Server (`data/phone_contacts.json`). Sie gehen nirgendwo anders hin.
@@ -320,6 +398,7 @@ docker compose exec jarvis jarvis doctor
 jarvis/
   brain.py          ruft `claude -p` auf (Abo-Login, Sessions pro Kanal, Tool-Freigaben)
   mcp_google.py     MCP-Server: Gmail + Google Kalender
+  mcp_mail.py       MCP-Server: E-Mail per IMAP/SMTP (jeder Anbieter, mehrere Konten)
   mcp_dav.py        MCP-Server: CalDAV-Kalender + CardDAV-Kontakte
   mcp_phone.py      MCP-Server: Handy-Kontakte + Aktionen (über die App)
   phone.py          Warteschlange/Kontakte-Speicher für die App
@@ -329,7 +408,8 @@ jarvis/
   scheduler.py      Morgen-Briefing, Posteingangs-Wächter
   stt.py / tts.py   Whisper / Piper (lokal)
   static/           Web-Oberfläche (auch in der Android-App angezeigt)
-android/            native Android-App (Kotlin, WebView + Sprach-/Handy-Brücke)
+android/            native Android-App (Kotlin, WebView + Sprach-/Handy-Brücke, Termux-Start)
+termux/             Installer: Jarvis + Claude Code komplett auf dem Handy
 .github/workflows/  APK-Build + Release, Python-Tests
 workspace/CLAUDE.md Persönlichkeit & Regeln von Jarvis
 tests/              pytest (mit Fake-Claude, verbraucht kein Kontingent)
