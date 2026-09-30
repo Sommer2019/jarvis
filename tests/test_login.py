@@ -18,3 +18,20 @@ def test_set_env_value(tmp_path, monkeypatch):
     assert (tmp_path / ".env").read_text() == "A=1\nCLAUDE_CODE_OAUTH_TOKEN=neu\nB=2\n"
     main.set_env_value("C", "3")
     assert (tmp_path / ".env").read_text().endswith("C=3\n")
+
+
+def test_extract_tokens_plain_and_colored():
+    from jarvis.login import extract_tokens
+
+    tok = "sk-ant-oat01-" + "Ab3_-x" * 16 + "AA"
+    out = f"Your OAuth token:\r\n\x1b[33m{tok}\x1b[0m\r\nStore this token securely."
+    assert extract_tokens(out)[0] == tok
+
+
+def test_extract_tokens_wrapped():
+    from jarvis.login import extract_tokens
+
+    tok = "sk-ant-oat01-" + "Zz9" * 30
+    wrapped = "\n".join(tok[i:i + 40] for i in range(0, len(tok), 40))
+    cands = extract_tokens(f"Token:\n{wrapped}\n\nStore this token securely.")
+    assert tok in cands[:3]
