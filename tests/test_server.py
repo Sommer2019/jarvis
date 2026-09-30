@@ -115,3 +115,9 @@ def test_location_in_chat(tmp_path):
     assert PhoneStore(tmp_path).location()["address"] == "Alexanderplatz, Berlin"
     r = c.post("/api/phone/location", headers=h, json={"lat": 48.1, "lon": 11.5})
     assert r.json()["lat"] == 48.1
+
+
+def test_health_reports_version(tmp_path):
+    c, _ = make(tmp_path)
+    v = c.get("/api/health").json()["version"]
+    assert v and v != "0.0.0"
