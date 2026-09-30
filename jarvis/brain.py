@@ -91,7 +91,12 @@ _NESTING_ENV_VARS = (
 
 def subscription_env() -> dict[str, str]:
     drop = set(_BILLING_ENV_VARS) | set(_NESTING_ENV_VARS)
-    return {k: v for k, v in os.environ.items() if k not in drop}
+    env = {k: v for k, v in os.environ.items() if k not in drop}
+    # Eine leere Zeile "CLAUDE_CODE_OAUTH_TOKEN=" in .env würde einen per /login
+    # gespeicherten Login überdecken → leere Werte weglassen
+    if not env.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip():
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    return env
 
 
 class Brain:
