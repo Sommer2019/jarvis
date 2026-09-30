@@ -135,6 +135,16 @@ class MainActivity : Activity() {
     private fun checkServer(onOk: () -> Unit) {
         val url = serverUrl
         Thread {
+            val serverVersion = try {
+                val h = java.net.URL("$url/api/health").openConnection() as java.net.HttpURLConnection
+                h.connectTimeout = 5000
+                h.readTimeout = 10000
+                val body = h.inputStream.bufferedReader().readText()
+                h.disconnect()
+                org.json.JSONObject(body).optString("version", "")
+            } catch (e: Exception) {
+                null
+            }
             val code = try {
                 val c = java.net.URL("$url/api/phone/actions").openConnection() as java.net.HttpURLConnection
                 c.connectTimeout = 5000
@@ -149,7 +159,13 @@ class MainActivity : Activity() {
             }
             runOnUiThread {
                 when {
-                    code in 200..299 -> onOk()
+                    code in 200..299 -> {
+                        if (serverVersion == "") {
+                            Toast.makeText(this, "Jarvis auf dem Server ist veraltet – bitte aktualisieren " +
+                                "(Handy: ~/jarvis-update.sh)", Toast.LENGTH_LONG).show()
+                        }
+                        onOk()
+                    }
                     code == 401 -> showError("Token passt nicht",
                         "Der Token in der App stimmt nicht mit dem Jarvis-Server überein. Den richtigen Token " +
                         "zeigt Termux mit ~/jarvis-token.sh (bzw. auf dem Server: jarvis token). " +
@@ -288,8 +304,9 @@ class MainActivity : Activity() {
     val consoleErrors = ArrayDeque<String>()
 
     private fun checkUiReady(view: WebView) {
-        val js = "JSON.stringify({ready: !!window.__jarvisReady, css: document.styleSheets.length, " +
-            "errors: (window.__jarvisErrors || []).slice(0, 3), title: document.title})"
+        // __jarvisReady gibt es ab Server 0.1.2; ältere Server erkennt man an JarvisNative.listen (aus app.js)
+        val js = "JSON.stringify({ready: !!window.__jarvisReady || !!(window.JarvisNative && window.JarvisNative.listen), " +
+            "css: document.styleSheets.length, errors: (window.__jarvisErrors || []).slice(0, 3), title: document.title})"
         view.evaluateJavascript(js) { raw ->
             val info = try {
                 org.json.JSONObject(org.json.JSONTokener(raw).nextValue() as String)

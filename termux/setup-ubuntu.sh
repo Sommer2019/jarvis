@@ -27,7 +27,11 @@ claude --version
 
 say "Jarvis herunterladen"
 if [ -d "$DIR/.git" ]; then
-  git -C "$DIR" pull --ff-only
+  # auch flache Ein-Branch-Klone auf den gewünschten Branch umstellen
+  git -C "$DIR" remote set-url origin "$REPO"
+  git -C "$DIR" remote set-branches --add origin "$BRANCH"
+  git -C "$DIR" fetch --depth 1 origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+  git -C "$DIR" checkout -q -B "$BRANCH" "origin/$BRANCH"
 else
   git clone --depth 1 --branch "$BRANCH" "$REPO" "$DIR"
 fi

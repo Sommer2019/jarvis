@@ -150,14 +150,31 @@ def _login() -> int:
         if input("Trotzdem neu anmelden? [j/N] ").strip().lower() not in ("j", "ja", "y"):
             return 0
     print("""
-Schritt 1: Gleich erscheint ein Login-Link. Öffne ihn (antippen bzw. lange drücken → öffnen),
-           melde dich mit deinem Claude Pro/Max-Konto an und kopiere den angezeigten Code.
-Schritt 2: Füge den Code hier ein und drücke Enter.
-Schritt 3: Claude zeigt dann einen langen Token (beginnt mit sk-ant-oat…). Kopiere ihn KOMPLETT.
+So geht's:
+  1. Gleich erscheint ein Login-Link. Öffne ihn (antippen bzw. lange drücken → Link öffnen)
+     und melde dich mit deinem Claude Pro/Max-Konto an.
+  2. Kopiere den Code von der Webseite, füge ihn hier ein und drücke Enter.
+  3. Den Token, den Claude danach anzeigt, liest Jarvis automatisch mit – nichts abtippen.
 """)
     env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")}
-    subprocess.run([claude, "setup-token"], env=env)
+    candidates: list[str] = []
+    try:
+        from .login import extract_tokens, run_captured
+
+        candidates = extract_tokens(run_captured([claude, "setup-token"], env))
+    except Exception as e:  # noqa: BLE001 – z.B. kein Terminal: klassisch weiter
+        print(f"(Automatisches Mitlesen nicht möglich: {e})")
+        subprocess.run([claude, "setup-token"], env=env)
     print()
+
+    for token in candidates[:3]:
+        print(f"Token erkannt ({token[:18]}…{token[-4:]}, {len(token)} Zeichen) – prüfe …")
+        ok, err = claude_check(token)
+        if ok:
+            return _save_token(token)
+        print(f"   funktioniert nicht: {err[:200]}")
+
+    print("Kein gültiger Token automatisch erkannt – bitte von Hand einfügen.")
     for _ in range(3):
         token = "".join(input("Token hier einfügen (sk-ant-oat…): ").split())  # Zeilenumbrüche/Leerzeichen raus
         if not token:
@@ -166,15 +183,19 @@ Schritt 3: Claude zeigt dann einen langen Token (beginnt mit sk-ant-oat…). Kop
         if not token.startswith("sk-ant-"):
             print("⚠️  Das sieht nicht wie ein Claude-Token aus (sollte mit sk-ant- beginnen). Nochmal:")
             continue
-        print("Prüfe Token …")
+        print(f"Prüfe Token ({len(token)} Zeichen) …")
         ok, err = claude_check(token)
         if ok:
-            path = set_env_value("CLAUDE_CODE_OAUTH_TOKEN", token)
-            print(f"✅ Verbunden! Token gespeichert in {path}.")
-            print("   Falls Jarvis schon läuft: neu starten (Handy: ~/jarvis-stop.sh && ~/jarvis-start.sh).")
-            return 0
+            return _save_token(token)
         print(f"❌ Token funktioniert nicht: {err[:300]}")
     return 1
+
+
+def _save_token(token: str) -> int:
+    path = set_env_value("CLAUDE_CODE_OAUTH_TOKEN", token)
+    print(f"✅ Verbunden! Token gespeichert in {path}.")
+    print("   Falls Jarvis schon läuft: neu starten (Handy: ~/jarvis-stop.sh; ~/jarvis-start.sh).")
+    return 0
 
 
 def _doctor() -> int:

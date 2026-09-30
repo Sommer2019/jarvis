@@ -60,11 +60,18 @@ cat > "$HOME/jarvis-stop.sh" <<'SH'
 pkill -f "jarvis serve" && echo "Jarvis gestoppt" || echo "Jarvis lief nicht"
 command -v termux-wake-unlock >/dev/null && termux-wake-unlock
 SH
+echo "$BRANCH" > "$HOME/.jarvis-branch"
 cat > "$HOME/jarvis-update.sh" <<'SH'
 #!/data/data/com.termux/files/usr/bin/bash
-# Holt die neueste Jarvis-Version und startet neu
+# Holt die neueste Jarvis-Version (in die Ubuntu-Umgebung, aus der Jarvis läuft) und startet neu
+B="$(cat "$HOME/.jarvis-branch" 2>/dev/null || echo master)"
 bash "$HOME/jarvis-stop.sh" || true
-proot-distro login ubuntu --shared-tmp -- bash -lc 'cd /root/jarvis && git pull --ff-only && .venv/bin/pip install -q -e .'
+proot-distro login ubuntu --shared-tmp -- env B="$B" bash -lc 'cd /root/jarvis \
+  && git remote set-branches --add origin "$B" \
+  && git fetch --depth 1 origin "+refs/heads/$B:refs/remotes/origin/$B" \
+  && git checkout -q -B "$B" "origin/$B" \
+  && .venv/bin/pip install -q -e . \
+  && echo "Jarvis aktualisiert: $(git log -1 --format="%h %s")"'
 bash "$HOME/jarvis-start.sh"
 SH
 cat > "$HOME/jarvis-login.sh" <<'SH'

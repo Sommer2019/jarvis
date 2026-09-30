@@ -90,7 +90,9 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "stt": True, "tts": tts.available(cfg)}
+        from . import __version__
+
+        return {"ok": True, "version": __version__, "stt": True, "tts": tts.available(cfg)}
 
     def channel(request: Request, voice: bool) -> str:
         kind = "android-app" if from_app(request) else "web-app"

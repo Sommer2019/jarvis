@@ -1,6 +1,6 @@
 [project]
 name = "jarvis"
-version = "0.1.0"
+version = "0.1.2"
 description = "Persönlicher Assistent auf Basis von Claude Code (läuft über das Claude-Abo, keine API-Tokens)"
 requires-python = ">=3.10"
 dependencies = [
