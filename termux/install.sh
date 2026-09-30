@@ -75,6 +75,13 @@ proot-distro login ubuntu --shared-tmp -- bash -lc 'cd /root/jarvis && .venv/bin
   bash "$HOME/jarvis-start.sh"
 }
 SH
+cat > "$HOME/jarvis-token.sh" <<'SH'
+#!/data/data/com.termux/files/usr/bin/bash
+# Zeigt den Token für die Jarvis-App (und kopiert ihn, falls Termux:API installiert ist)
+T="$(proot-distro login ubuntu --shared-tmp -- sh -c "grep '^JARVIS_TOKEN=' /root/jarvis/.env | cut -d= -f2-" | tr -d '\r')"
+echo "Token für die Jarvis-App: $T"
+command -v termux-clipboard-set >/dev/null && printf '%s' "$T" | timeout 5 termux-clipboard-set && echo "(in die Zwischenablage kopiert)"
+SH
 cat > "$HOME/jarvis-shell.sh" <<'SH'
 #!/data/data/com.termux/files/usr/bin/bash
 # Öffnet eine Shell in der Jarvis-Umgebung (z.B. für `jarvis doctor`, `jarvis google-auth`, .env bearbeiten)
@@ -116,6 +123,6 @@ In der Jarvis-App:
 Wichtig: Android → Apps → Termux → Akku → „Nicht einschränken“, sonst beendet
 Android Jarvis im Hintergrund.
 
-Nützlich:  ~/jarvis-login.sh (Claude-Abo verbinden)  ·  ~/jarvis-shell.sh (Einstellungen, jarvis doctor)
+Nützlich:  ~/jarvis-token.sh (Token für die App)  ·  ~/jarvis-login.sh (Claude-Abo verbinden)  ·  ~/jarvis-shell.sh (Einstellungen, jarvis doctor)
            ~/jarvis-update.sh  ·  ~/jarvis-stop.sh
 TXT

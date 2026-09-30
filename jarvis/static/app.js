@@ -343,6 +343,7 @@
   }
 
   async function init() {
+    window.__jarvisReady = true; // Signal an die Android-App: Oberfläche läuft
     refreshChips();
     if (!token) return showLogin(true);
     try {

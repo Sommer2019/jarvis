@@ -87,6 +87,14 @@ class MainActivity : Activity() {
         webView.webViewClient = JarvisWebClient()
         webView.webChromeClient = object : WebChromeClient() {
             // Fallback-Aufnahme im Web (MediaRecorder) braucht Mikrofon-Freigabe
+            override fun onConsoleMessage(msg: android.webkit.ConsoleMessage): Boolean {
+                if (msg.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) {
+                    consoleErrors.addLast("${msg.message()} (${msg.sourceId().substringAfterLast('/')}:${msg.lineNumber()})")
+                    while (consoleErrors.size > 5) consoleErrors.removeFirst()
+                }
+                return false
+            }
+
             override fun onPermissionRequest(request: PermissionRequest) {
                 if (hasPermission(Manifest.permission.RECORD_AUDIO)) request.grant(request.resources)
                 else request.deny()
@@ -114,9 +122,46 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(TERMUX_RUN_COMMAND), REQ_TERMUX)
         }
         showStatus("Verbinde mit Jarvis …", esc(serverUrl))
-        loadServer(withVoice = pendingTalk)
+        val voice = pendingTalk
         pendingTalk = false
+        checkServer { loadServer(withVoice = voice) }
         maybeSyncContacts()
+    }
+
+    /**
+     * Prüft vor dem Laden direkt, ob der Server erreichbar ist und der Token stimmt –
+     * so gibt es klare Fehlermeldungen statt einer leeren Seite.
+     */
+    private fun checkServer(onOk: () -> Unit) {
+        val url = serverUrl
+        Thread {
+            val code = try {
+                val c = java.net.URL("$url/api/phone/actions").openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 5000
+                c.readTimeout = 10000
+                c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("X-Jarvis-App", bridge.version())
+                val rc = c.responseCode
+                c.disconnect()
+                rc
+            } catch (e: Exception) {
+                -1
+            }
+            runOnUiThread {
+                when {
+                    code in 200..299 -> onOk()
+                    code == 401 -> showError("Token passt nicht",
+                        "Der Token in der App stimmt nicht mit dem Jarvis-Server überein. Den richtigen Token " +
+                        "zeigt Termux mit ~/jarvis-token.sh (bzw. auf dem Server: jarvis token). " +
+                        "Dann hier „Einstellungen“ → Token neu einfügen.")
+                    code == -1 && localMode -> handleLocalServerDown()
+                    code == -1 -> showError("Jarvis nicht erreichbar", "Keine Verbindung zu $url. " +
+                        "Läuft der Server? Ist Tailscale auf dem Handy verbunden?")
+                    else -> showError("Fehler $code", "Der Server unter $url antwortet unerwartet. " +
+                        "Ist das wirklich die Jarvis-Adresse?")
+                }
+            }
+        }.start()
     }
 
     /** Lädt die Jarvis-Oberfläche und überwacht, ob sie wirklich ankommt. */
@@ -239,6 +284,33 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** Letzte JavaScript-Fehler (für die Fehlerseite). */
+    val consoleErrors = ArrayDeque<String>()
+
+    private fun checkUiReady(view: WebView) {
+        val js = "JSON.stringify({ready: !!window.__jarvisReady, css: document.styleSheets.length, " +
+            "errors: (window.__jarvisErrors || []).slice(0, 3), title: document.title})"
+        view.evaluateJavascript(js) { raw ->
+            val info = try {
+                org.json.JSONObject(org.json.JSONTokener(raw).nextValue() as String)
+            } catch (e: Exception) { null }
+            if (info?.optBoolean("ready") == true) {
+                pageLoaded = true
+                return@evaluateJavascript
+            }
+            val details = buildString {
+                append("Seite: ").append(info?.optString("title").takeUnless { it.isNullOrEmpty() } ?: "?")
+                append(" · Stylesheets geladen: ").append(info?.optInt("css") ?: "?")
+                val errs = mutableListOf<String>()
+                info?.optJSONArray("errors")?.let { a -> for (i in 0 until a.length()) errs.add(a.getString(i)) }
+                errs.addAll(consoleErrors)
+                append(" · Fehler: ").append(if (errs.isEmpty()) "keine gemeldet" else errs.distinct().take(4).joinToString(" | "))
+            }
+            showError("Oberfläche startet nicht", "Die Seite von $serverUrl kam an, aber die App-Oberfläche " +
+                "(JavaScript/CSS) lief nicht. Bitte schick diese Meldung an den Entwickler. $details")
+        }
+    }
+
     // ------------------------------------------------ Jarvis auf dem Handy
     fun isTermuxInstalled(): Boolean = try {
         packageManager.getPackageInfo(TERMUX, 0); true
@@ -315,7 +387,7 @@ class MainActivity : Activity() {
             return
         }
         showStatus("Jarvis startet …", "Der Assistent wird auf deinem Handy hochgefahren (Versuch $startAttempts von 20).")
-        handler.postDelayed({ loadServer() }, 3000)
+        handler.postDelayed({ checkServer { loadServer() } }, 3000)
     }
 
     private fun openUrl(url: String) = try {
@@ -386,17 +458,9 @@ class MainActivity : Activity() {
 
         override fun onPageFinished(view: WebView, url: String?) {
             if (url == null || !url.startsWith(serverUrl) || mainFrameError) return
-            // Prüfen, ob wirklich die Jarvis-Oberfläche angekommen ist
-            view.evaluateJavascript("(function(){return !!document.getElementById('mic')})()") { ok ->
-                if (ok == "true") {
-                    pageLoaded = true
-                    handler.removeCallbacks(watchdog)
-                } else {
-                    view.evaluateJavascript("(document.title||'')+' | '+(document.body?document.body.innerText.slice(0,200):'')") { t ->
-                        showError("Unerwartete Seite", "Unter $serverUrl kam nicht die Jarvis-Oberfläche an: $t")
-                    }
-                }
-            }
+            handler.removeCallbacks(watchdog)
+            // Kurz warten, dann prüfen, ob die Oberfläche wirklich läuft (CSS + JavaScript)
+            handler.postDelayed({ checkUiReady(view) }, 2500)
         }
     }
 }

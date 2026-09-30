@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b1220">
   <title>Jarvis</title>
+  <script>
+    // Fehler früh einsammeln, damit die Android-App sie anzeigen kann
+    window.__jarvisErrors = [];
+    window.addEventListener("error", function (e) {
+      window.__jarvisErrors.push((e.message || "Ladefehler") + " @ " + (e.filename || (e.target && (e.target.src || e.target.href)) || "?") + ":" + (e.lineno || ""));
+    }, true);
+  </script>
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
