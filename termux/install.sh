@@ -67,6 +67,14 @@ bash "$HOME/jarvis-stop.sh" || true
 proot-distro login ubuntu --shared-tmp -- bash -lc 'cd /root/jarvis && git pull --ff-only && .venv/bin/pip install -q -e .'
 bash "$HOME/jarvis-start.sh"
 SH
+cat > "$HOME/jarvis-login.sh" <<'SH'
+#!/data/data/com.termux/files/usr/bin/bash
+# Verbindet Jarvis mit deinem Claude-Abo (Token einfügen) und startet Jarvis neu
+proot-distro login ubuntu --shared-tmp -- bash -lc 'cd /root/jarvis && .venv/bin/jarvis login' && {
+  bash "$HOME/jarvis-stop.sh" >/dev/null 2>&1 || true
+  bash "$HOME/jarvis-start.sh"
+}
+SH
 cat > "$HOME/jarvis-shell.sh" <<'SH'
 #!/data/data/com.termux/files/usr/bin/bash
 # Öffnet eine Shell in der Jarvis-Umgebung (z.B. für `jarvis doctor`, `jarvis google-auth`, .env bearbeiten)
@@ -108,5 +116,6 @@ In der Jarvis-App:
 Wichtig: Android → Apps → Termux → Akku → „Nicht einschränken“, sonst beendet
 Android Jarvis im Hintergrund.
 
-Nützlich:  ~/jarvis-shell.sh (Einstellungen, jarvis doctor)  ·  ~/jarvis-update.sh  ·  ~/jarvis-stop.sh
+Nützlich:  ~/jarvis-login.sh (Claude-Abo verbinden)  ·  ~/jarvis-shell.sh (Einstellungen, jarvis doctor)
+           ~/jarvis-update.sh  ·  ~/jarvis-stop.sh
 TXT

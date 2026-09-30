@@ -46,16 +46,10 @@ if [ ! -f .env ]; then
   echo "CLAUDE_BIN=$(command -v claude)" >> .env
 fi
 
-if [ -z "${JARVIS_SKIP_LOGIN:-}" ] && ! grep -q "^CLAUDE_CODE_OAUTH_TOKEN=.\+" .env; then
+if [ -z "${JARVIS_SKIP_LOGIN:-}" ]; then
   say "Mit deinem Claude-Abo verbinden"
-  echo "Gleich öffnet sich ein Login-Link. Tippe ihn an, melde dich mit deinem Pro/Max-Konto an"
-  echo "und füge den Code wieder hier ein. Danach zeigt Claude einen langen Token an (sk-ant-oat…)."
-  claude setup-token || true
-  printf '\nToken hier einfügen (oder leer lassen und später in .env eintragen): '
-  read -r OAUTH </dev/tty || OAUTH=""
-  if [ -n "$OAUTH" ]; then
-    sed -i "s|^CLAUDE_CODE_OAUTH_TOKEN=.*|CLAUDE_CODE_OAUTH_TOKEN=$OAUTH|" .env
-  fi
+  # prüft selbst, ob schon verbunden; sonst Login-Link + Token einfügen
+  .venv/bin/jarvis login </dev/tty || echo "Login später nachholen: ~/jarvis-login.sh"
 fi
 
 say "Einrichtung prüfen"

@@ -10,7 +10,9 @@ import shutil
 import subprocess
 import sys
 
-from .config import config
+from pathlib import Path
+
+from .config import ROOT, config
 
 
 async def _serve() -> None:
@@ -95,29 +97,111 @@ async def _briefing() -> None:
     print(await sched.run_routine("briefing", BRIEFING_PROMPT))
 
 
+def claude_check(token: str | None = None) -> tuple[bool, str]:
+    """Testet den Abo-Login mit einer Mini-Anfrage. Liefert (ok, Fehlermeldung)."""
+    import json
+
+    from .brain import parse_output, subscription_env
+
+    claude = shutil.which(config.claude_bin)
+    if not claude:
+        return False, "Claude Code nicht gefunden"
+    env = subscription_env()
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    try:
+        res = subprocess.run([claude, "-p", "Antworte nur mit OK", "--output-format", "json", "--tools", ""],
+                             capture_output=True, text=True, env=env, timeout=180, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return False, "Zeitüberschreitung (Internetverbindung?)"
+    reply = parse_output(res.stdout, res.stderr, res.returncode)
+    return (not reply.is_error), reply.text
+
+
+def set_env_value(key: str, value: str) -> Path:
+    """Setzt KEY=value in .env (ersetzt eine vorhandene Zeile oder hängt an)."""
+    path = ROOT / ".env"
+    lines = path.read_text().splitlines() if path.exists() else []
+    out, done = [], False
+    for line in lines:
+        if line.split("=", 1)[0].strip() == key:
+            if not done:
+                out.append(f"{key}={value}")
+                done = True
+            continue
+        out.append(line)
+    if not done:
+        out.append(f"{key}={value}")
+    path.write_text("\n".join(out) + "\n")
+    path.chmod(0o600)
+    os.environ[key] = value
+    return path
+
+
+def _login() -> int:
+    """Führt durch `claude setup-token` und speichert den Token in .env."""
+    claude = shutil.which(config.claude_bin)
+    if not claude:
+        print("❌ Claude Code ist nicht installiert.")
+        return 1
+    ok, _ = claude_check()
+    if ok:
+        print("✅ Du bist bereits mit deinem Claude-Abo verbunden.")
+        if input("Trotzdem neu anmelden? [j/N] ").strip().lower() not in ("j", "ja", "y"):
+            return 0
+    print("""
+Schritt 1: Gleich erscheint ein Login-Link. Öffne ihn (antippen bzw. lange drücken → öffnen),
+           melde dich mit deinem Claude Pro/Max-Konto an und kopiere den angezeigten Code.
+Schritt 2: Füge den Code hier ein und drücke Enter.
+Schritt 3: Claude zeigt dann einen langen Token (beginnt mit sk-ant-oat…). Kopiere ihn KOMPLETT.
+""")
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")}
+    subprocess.run([claude, "setup-token"], env=env)
+    print()
+    for _ in range(3):
+        token = "".join(input("Token hier einfügen (sk-ant-oat…): ").split())  # Zeilenumbrüche/Leerzeichen raus
+        if not token:
+            print("Abgebrochen.")
+            return 1
+        if not token.startswith("sk-ant-"):
+            print("⚠️  Das sieht nicht wie ein Claude-Token aus (sollte mit sk-ant- beginnen). Nochmal:")
+            continue
+        print("Prüfe Token …")
+        ok, err = claude_check(token)
+        if ok:
+            path = set_env_value("CLAUDE_CODE_OAUTH_TOKEN", token)
+            print(f"✅ Verbunden! Token gespeichert in {path}.")
+            print("   Falls Jarvis schon läuft: neu starten (Handy: ~/jarvis-stop.sh && ~/jarvis-start.sh).")
+            return 0
+        print(f"❌ Token funktioniert nicht: {err[:300]}")
+    return 1
+
+
 def _doctor() -> int:
     ok = True
 
-    def check(name: str, good: bool, hint: str = "") -> None:
+    def check(name: str, good: bool, hint: str = "", optional: bool = False) -> None:
         nonlocal ok
-        ok &= good
-        print(f"{'✅' if good else '❌'} {name}" + (f"  → {hint}" if not good and hint else ""))
+        if not optional:
+            ok &= good
+        mark = "✅" if good else ("⚪" if optional else "❌")
+        print(f"{mark} {name}" + (f"  → {hint}" if not good and hint else ""))
 
+    print("Pflicht:")
     claude = shutil.which(config.claude_bin)
     check("Claude Code installiert", bool(claude), "npm install -g @anthropic-ai/claude-code")
     if os.getenv("ANTHROPIC_API_KEY"):
         print("⚠️  ANTHROPIC_API_KEY ist gesetzt – Jarvis ignoriert ihn bewusst (sonst API-Kosten).")
     if claude:
-        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-        res = subprocess.run([claude, "-p", "Antworte nur mit OK", "--output-format", "json",
-                              "--tools", ""], capture_output=True, text=True, env=env, timeout=120)
-        good = res.returncode == 0 and '"is_error":false' in res.stdout.replace(" ", "")
-        check("Claude-Abo-Login funktioniert", good,
-              "`claude setup-token` ausführen und CLAUDE_CODE_OAUTH_TOKEN in .env setzen "
-              "(oder einmal `claude` starten und /login)")
+        good, err = claude_check()
+        check("Claude-Abo-Login funktioniert", good, "`jarvis login` ausführen")
+        if not good:
+            print(f"   Meldung von Claude: {err[:300]}")
+
+    print("\nDienste (nur was du eingerichtet hast):")
     if config.google_enabled:
         check("Google-OAuth-Client vorhanden", config.google_credentials_file.exists(),
-              f"JSON nach {config.google_credentials_file} legen (siehe README)")
+              f"JSON nach {config.google_credentials_file} legen (siehe README) – oder GOOGLE_ENABLED=false")
         check("Google-Login erledigt", config.google_token_file.exists(), "jarvis google-auth")
     from . import mcp_mail
     if mcp_mail.configured():
@@ -132,16 +216,23 @@ def _doctor() -> int:
         check("GitHub", _github_ok(), "GITHUB_TOKEN prüfen (Fine-grained Token, Zugriff auf Repos)")
     if config.discord_token:
         check("Discord konfiguriert", bool(config.discord_allowed), "DISCORD_ALLOWED_USER_IDS setzen")
-    check("Telegram konfiguriert", bool(config.telegram_token and config.telegram_allowed),
-          "TELEGRAM_BOT_TOKEN und TELEGRAM_ALLOWED_USER_IDS setzen (optional)")
+    if config.telegram_token:
+        check("Telegram konfiguriert", bool(config.telegram_allowed), "TELEGRAM_ALLOWED_USER_IDS setzen")
+
+    print("\nOptional (auf dem Handy nicht nötig – Android erkennt Sprache selbst):")
+    if not config.telegram_token:
+        check("Telegram", False, "TELEGRAM_BOT_TOKEN setzen, falls gewünscht", optional=True)
     try:
         import faster_whisper  # noqa: F401
-        check("Spracherkennung (faster-whisper)", True)
+        check("Spracherkennung auf dem Server (Whisper)", True, optional=True)
     except ImportError:
-        check("Spracherkennung (faster-whisper)", False, "pip install -e '.[voice]'")
+        check("Spracherkennung auf dem Server (Whisper)", False,
+              "nur für Sprachnachrichten in Telegram/Discord/WhatsApp: pip install -e '.[voice]'", optional=True)
     from . import tts
-    check("Sprachausgabe (Piper, optional)", tts.available(config), "PIPER_VOICE setzen (siehe README)")
-    check("ffmpeg (für Telegram-Sprachantworten)", bool(shutil.which("ffmpeg")), "apt install ffmpeg")
+    check("Sprachausgabe auf dem Server (Piper)", tts.available(config),
+          "nur für Sprach-Antworten in Telegram/Discord: PIPER_VOICE setzen", optional=True)
+    check("ffmpeg", bool(shutil.which("ffmpeg")), "nur mit Piper nötig: apt install ffmpeg", optional=True)
+    print("\n" + ("Alles bereit. ✅" if ok else "Bitte die ❌-Punkte beheben."))
     return 0 if ok else 1
 
 
@@ -192,6 +283,7 @@ def main() -> None:
     sub.add_parser("google-auth", help="Einmalig mit Google (Gmail/Kalender) verbinden")
     sub.add_parser("briefing", help="Morgen-Briefing jetzt erstellen und ausgeben")
     sub.add_parser("doctor", help="Einrichtung prüfen")
+    sub.add_parser("login", help="Mit deinem Claude-Abo verbinden (claude setup-token → .env)")
     sub.add_parser("token", help="Web-Token für die Handy-App anzeigen")
     args = parser.parse_args()
 
@@ -209,6 +301,8 @@ def main() -> None:
         run_auth_flow(config.google_credentials_file, config.google_token_file)
     elif args.cmd == "briefing":
         asyncio.run(_briefing())
+    elif args.cmd == "login":
+        sys.exit(_login())
     elif args.cmd == "doctor":
         sys.exit(_doctor())
     elif args.cmd == "token":

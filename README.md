@@ -80,10 +80,10 @@ cp .env.example .env
 ### 2. Mit deinem Claude-Abo verbinden (ohne API-Key)
 
 ```bash
-claude setup-token
+jarvis login
 ```
-Melde dich mit deinem Pro/Max-Konto an und trag den angezeigten Token in `.env` als
-`CLAUDE_CODE_OAUTH_TOKEN=` ein. Alternativ startest du auf dem Server einmal `claude` und
+Das startet `claude setup-token`: Du meldest dich mit deinem Pro/Max-Konto an und fügst den
+angezeigten Token ein. Jarvis prüft ihn und speichert ihn in `.env` (`CLAUDE_CODE_OAUTH_TOKEN`). Alternativ startest du auf dem Server einmal `claude` und
 meldest dich mit `/login` an.
 
 > ⚠️ Setze **keinen** `ANTHROPIC_API_KEY`. Claude Code würde sonst über die API abrechnen.
@@ -204,6 +204,10 @@ Ubuntu-Umgebung. Die APK ist dein Frontend und startet alles automatisch.
    erlauben. Dann startet die App Jarvis selbst, wenn er nicht läuft.
 5. Android → Apps → **Termux → Akku → „Nicht einschränken“**. Sonst beendet Android Jarvis im
    Hintergrund, und Routinen wie das Morgen-Briefing laufen nicht.
+
+**Claude-Login fehlgeschlagen?** (`jarvis doctor` zeigt ❌ bei „Claude-Abo-Login“): In Termux
+`~/jarvis-login.sh` ausführen. Das zeigt den Login-Link, du fügst den Token ein, Jarvis prüft ihn sofort
+und startet neu. Tipp: Den Token (`sk-ant-oat…`) lange drücken → „Kopieren“ und vollständig einfügen.
 
 **Einstellungen ändern** (Mail, Kalender, Telegram …): In Termux `~/jarvis-shell.sh` ausführen,
 dann `nano .env`, danach `~/jarvis-stop.sh && ~/jarvis-start.sh`. **Updates:** `~/jarvis-update.sh`.
