@@ -16,6 +16,7 @@ import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.CheckBox
@@ -32,6 +33,8 @@ class MainActivity : Activity() {
 
     companion object {
         const val ACTION_TALK = "de.jarvis.app.TALK"
+        const val ACTION_SETTINGS = "de.jarvis.app.SETTINGS"
+        const val LOAD_TIMEOUT_MS = 20_000L
         const val REQ_AUDIO = 1
         const val REQ_CONTACTS = 2
         const val REQ_TERMUX = 3
@@ -48,6 +51,16 @@ class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     private var pendingTalk = false
     private var startAttempts = 0
+    private var pageLoaded = false
+    private var mainFrameError = false
+    private val watchdog = Runnable {
+        if (!pageLoaded) {
+            webView.stopLoading()
+            if (localMode) handleLocalServerDown()
+            else showError("Keine Antwort von Jarvis",
+                "$serverUrl antwortet nicht (Zeitüberschreitung). Läuft der Server? Ist Tailscale auf dem Handy verbunden?")
+        }
+    }
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     val serverUrl: String get() = prefs.getString("server_url", "")!!.trimEnd('/')
@@ -81,11 +94,16 @@ class MainActivity : Activity() {
         }
 
         pendingTalk = isTalkIntent(intent)
-        if (serverUrl.isEmpty()) showSetup() else loadApp()
+        if (serverUrl.isEmpty()) showSetup() else {
+            loadApp()
+            if (isSettingsIntent(intent)) showSetup()
+        }
         if (!hasPermission(Manifest.permission.RECORD_AUDIO)) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_AUDIO)
         }
     }
+
+    private fun isSettingsIntent(i: Intent?): Boolean = i?.action == ACTION_SETTINGS
 
     private fun isTalkIntent(i: Intent?): Boolean =
         i?.action in setOf(ACTION_TALK, Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND)
@@ -95,17 +113,32 @@ class MainActivity : Activity() {
         if (localMode && !hasPermission(TERMUX_RUN_COMMAND) && isTermuxInstalled()) {
             requestPermissions(arrayOf(TERMUX_RUN_COMMAND), REQ_TERMUX)
         }
+        showStatus("Verbinde mit Jarvis …", esc(serverUrl))
+        loadServer(withVoice = pendingTalk)
+        pendingTalk = false
+        maybeSyncContacts()
+    }
+
+    /** Lädt die Jarvis-Oberfläche und überwacht, ob sie wirklich ankommt. */
+    fun loadServer(withVoice: Boolean = false) {
         val url = Uri.parse("$serverUrl/").buildUpon()
             .appendQueryParameter("token", token)
-            .apply { if (pendingTalk) appendQueryParameter("voice", "1") }
+            .apply { if (withVoice) appendQueryParameter("voice", "1") }
             .build().toString()
-        pendingTalk = false
-        webView.loadUrl(url)
-        maybeSyncContacts()
+        pageLoaded = false
+        mainFrameError = false
+        handler.removeCallbacks(watchdog)
+        handler.postDelayed(watchdog, LOAD_TIMEOUT_MS)
+        // loadDataWithBaseURL (Statusseite) kurz rendern lassen, dann laden
+        handler.post { webView.loadUrl(url) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (isSettingsIntent(intent)) {
+            showSetup()
+            return
+        }
         if (isTalkIntent(intent)) {
             webView.evaluateJavascript("window.JarvisNative && window.JarvisNative.listen && window.JarvisNative.listen()", null)
         }
@@ -230,13 +263,33 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showStatus(title: String, text: String) {
-        val html = """<html><body style="background:#0b1220;color:#e6edf7;font-family:sans-serif;
-            display:flex;flex-direction:column;justify-content:center;align-items:center;height:90vh;text-align:center;padding:24px">
-            <div style="width:64px;height:64px;border-radius:50%;background:#36c2ff;opacity:.8;margin-bottom:24px;
-            animation:p 1.2s infinite"></div><h2>$title</h2><p style="color:#8a97ad">$text</p>
+    private fun esc(t: String) = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    /** Einfache Seite mit Titel, Text und Knöpfen (Knöpfe rufen die JS-Brücke auf). */
+    private fun showPage(title: String, text: String, busy: Boolean, termuxButton: Boolean) {
+        val btn = "display:block;width:100%;max-width:320px;margin:8px auto;padding:14px;border-radius:12px;" +
+            "border:1px solid #22304a;background:#121a2b;color:#e6edf7;font-size:16px"
+        val buttons = buildString {
+            append("""<button style="$btn;background:#1f7cff;border:0" onclick="JarvisAndroid.retry()">Erneut versuchen</button>""")
+            if (termuxButton) append("""<button style="$btn" onclick="JarvisAndroid.startTermux()">Jarvis in Termux starten</button>""")
+            append("""<button style="$btn" onclick="JarvisAndroid.openSettings()">Einstellungen</button>""")
+        }
+        val dot = if (busy) """<div style="width:64px;height:64px;border-radius:50%;background:#36c2ff;opacity:.8;margin:0 auto 24px;animation:p 1.2s infinite"></div>"""
+            else """<div style="font-size:48px;margin-bottom:12px">⚠️</div>"""
+        val html = """<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+            <body style="background:#0b1220;color:#e6edf7;font-family:sans-serif;margin:0;padding:32px 20px;
+            min-height:90vh;display:flex;flex-direction:column;justify-content:center;text-align:center">
+            $dot<h2 style="margin:0 0 12px">$title</h2><p style="color:#8a97ad;line-height:1.5">$text</p>
+            <div style="margin-top:24px">$buttons</div>
             <style>@keyframes p{50%{opacity:.3}}</style></body></html>"""
         webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+    }
+
+    private fun showStatus(title: String, text: String) = showPage(title, text, busy = true, termuxButton = false)
+
+    fun showError(title: String, text: String) {
+        handler.removeCallbacks(watchdog)
+        showPage(esc(title), esc(text), busy = false, termuxButton = localMode)
     }
 
     /** Lokaler Server nicht erreichbar → per Termux starten und bis ~90 s neu versuchen. */
@@ -244,24 +297,25 @@ class MainActivity : Activity() {
         if (startAttempts == 0) {
             val started = startLocalServer()
             if (!started && !isTermuxInstalled()) {
-                showSetup("Termux ist nicht installiert. Siehe „Anleitung“: Jarvis auf dem Handy einrichten.")
+                showError("Termux fehlt", "Für „Jarvis läuft auf diesem Handy“ brauchst du Termux (F-Droid) und " +
+                    "einmalig termux/install.sh. Oder in den Einstellungen die Adresse deines Servers eintragen.")
                 return
             }
             if (!started && !hasPermission(TERMUX_RUN_COMMAND)) {
-                showStatus("Berechtigung fehlt", "Bitte erlaube „Befehle in Termux ausführen“ – oder starte " +
-                    "in Termux einmal <code>~/jarvis-start.sh</code>.")
+                showError("Jarvis läuft nicht", "Die App darf Jarvis noch nicht selbst starten. Entweder in Termux " +
+                    "~/jarvis-start.sh ausführen und dann „Erneut versuchen“ – oder in den Android-Einstellungen der " +
+                    "Jarvis-App die Berechtigung „Befehle in Termux ausführen“ erlauben.")
+                return
             }
         }
         startAttempts++
-        if (startAttempts > 30) {
-            showSetup("Jarvis startet nicht. Öffne Termux und führe ~/jarvis-start.sh aus (Log: ~/jarvis.log).")
+        if (startAttempts > 20) {
+            showError("Jarvis startet nicht", "Öffne Termux und führe ~/jarvis-start.sh aus. Fehler stehen in ~/jarvis.log " +
+                "(anzeigen: tail -30 ~/jarvis.log).")
             return
         }
-        showStatus("Jarvis startet …", "Der Assistent wird auf deinem Handy hochgefahren (Versuch $startAttempts).")
-        handler.postDelayed({
-            val url = Uri.parse("$serverUrl/").buildUpon().appendQueryParameter("token", token).build().toString()
-            webView.loadUrl(url)
-        }, 3000)
+        showStatus("Jarvis startet …", "Der Assistent wird auf deinem Handy hochgefahren (Versuch $startAttempts von 20).")
+        handler.postDelayed({ loadServer() }, 3000)
     }
 
     private fun openUrl(url: String) = try {
@@ -316,8 +370,33 @@ class MainActivity : Activity() {
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (!request.isForMainFrame) return
+            mainFrameError = true
+            handler.removeCallbacks(watchdog)
             if (localMode) handleLocalServerDown()
-            else showSetup("Jarvis nicht erreichbar (${error.description}). Läuft der Server, ist Tailscale an?")
+            else showError("Jarvis nicht erreichbar", "${error.description} – Adresse: $serverUrl. " +
+                "Läuft der Server? Ist Tailscale auf dem Handy verbunden?")
+        }
+
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, response: WebResourceResponse) {
+            if (!request.isForMainFrame) return
+            mainFrameError = true
+            showError("Fehler ${response.statusCode}", "Der Server unter $serverUrl antwortet mit " +
+                "„${response.reasonPhrase}“. Ist das wirklich die Jarvis-Adresse?")
+        }
+
+        override fun onPageFinished(view: WebView, url: String?) {
+            if (url == null || !url.startsWith(serverUrl) || mainFrameError) return
+            // Prüfen, ob wirklich die Jarvis-Oberfläche angekommen ist
+            view.evaluateJavascript("(function(){return !!document.getElementById('mic')})()") { ok ->
+                if (ok == "true") {
+                    pageLoaded = true
+                    handler.removeCallbacks(watchdog)
+                } else {
+                    view.evaluateJavascript("(document.title||'')+' | '+(document.body?document.body.innerText.slice(0,200):'')") { t ->
+                        showError("Unerwartete Seite", "Unter $serverUrl kam nicht die Jarvis-Oberfläche an: $t")
+                    }
+                }
+            }
         }
     }
 }

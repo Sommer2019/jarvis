@@ -11,4 +11,15 @@
             android:targetPackage="de.jarvis.app"
             android:targetClass="de.jarvis.app.MainActivity" />
     </shortcut>
+    <shortcut
+        android:shortcutId="settings"
+        android:enabled="true"
+        android:icon="@drawable/ic_mic"
+        android:shortcutShortLabel="@string/shortcut_settings"
+        android:shortcutLongLabel="@string/shortcut_settings">
+        <intent
+            android:action="de.jarvis.app.SETTINGS"
+            android:targetPackage="de.jarvis.app"
+            android:targetClass="de.jarvis.app.MainActivity" />
+    </shortcut>
 </shortcuts>
