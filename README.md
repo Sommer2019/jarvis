@@ -197,7 +197,7 @@ Ubuntu-Umgebung. Die APK ist dein Frontend und startet alles automatisch.
    Das Skript richtet die Ubuntu-Umgebung, Claude Code und Jarvis ein. Zwischendurch meldest du dich
    einmal mit deinem Claude-Abo an: den Link antippen, einloggen und den Token einfügen.
    Ist das Repo privat, verwende `https://<github-token>@github.com/…` als Adresse. Liegt die aktuelle
-   Version nicht auf `main`, setz vorher `export JARVIS_BRANCH=<branch>`.
+   Version nicht auf `master`, setz vorher `export JARVIS_BRANCH=<branch>`.
 3. **Jarvis-App** (APK) öffnen, „Jarvis läuft auf diesem Handy“ ankreuzen und den Token einfügen
    (er liegt in der Zwischenablage oder steht am Ende der Installation).
 4. In den Android-Einstellungen der Jarvis-App die Berechtigung **„Befehle in Termux ausführen“**
@@ -234,6 +234,7 @@ direkten Download-Link auf dem Handy erstellst du ein Release:
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
+Alternativ: **Actions → „Android-App (APK)“ → „Run workflow“** und bei „Release erstellen“ z.B. `v0.2.0` eintragen.
 Die APK hängt dann unter **Releases** und lässt sich direkt am Handy herunterladen und installieren
 („Installation aus unbekannten Quellen“ einmal erlauben).
 

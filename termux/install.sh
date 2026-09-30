@@ -3,7 +3,7 @@
 #  Jarvis komplett auf dem Handy – Installer für Termux
 #
 #  In Termux (aus F-Droid, NICHT Play Store) ausführen:
-#    curl -fsSL https://raw.githubusercontent.com/Sommer2019/jarvis/main/termux/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/Sommer2019/jarvis/master/termux/install.sh | bash
 #  oder nach dem Klonen:  bash termux/install.sh
 #
 #  Richtet ein: Ubuntu-Umgebung (proot-distro) mit Claude Code + Jarvis,
@@ -17,9 +17,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 CLONE_REPO="$(git -C "$HERE/.." remote get-url origin 2>/dev/null || true)"
 CLONE_BRANCH="$(git -C "$HERE/.." rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 REPO="${JARVIS_REPO:-${CLONE_REPO:-https://github.com/Sommer2019/jarvis.git}}"
-BRANCH="${JARVIS_BRANCH:-${CLONE_BRANCH:-main}}"
+BRANCH="${JARVIS_BRANCH:-${CLONE_BRANCH:-master}}"
 DISTRO=ubuntu
-ROOTFS="$PREFIX/var/lib/proot-distro/installed-rootfs/$DISTRO"
 
 say() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
 
@@ -27,19 +26,24 @@ say "Termux-Pakete installieren"
 pkg update -y
 pkg install -y proot-distro curl git termux-api || pkg install -y proot-distro curl git
 
-if [ ! -d "$ROOTFS" ]; then
+# Nicht über den Rootfs-Pfad prüfen – der unterscheidet sich je nach proot-distro-Version
+in_ubuntu() { proot-distro login "$DISTRO" --shared-tmp -- "$@"; }
+if ! in_ubuntu true >/dev/null 2>&1; then
   say "Ubuntu-Umgebung installieren (einmalig, ca. 1 GB)"
   proot-distro install "$DISTRO"
 fi
 
 say "Jarvis in Ubuntu einrichten"
-# Setup-Skript in die Ubuntu-Umgebung kopieren (lokal vorhanden oder aus dem Repo laden)
+# Setup-Skript über das gemeinsame /tmp übergeben (--shared-tmp: Termux-$TMPDIR = /tmp in Ubuntu)
+SHARED_TMP="${TMPDIR:-$PREFIX/tmp}"
+mkdir -p "$SHARED_TMP"
 if [ -n "$HERE" ] && [ -f "$HERE/setup-ubuntu.sh" ]; then
-  cp "$HERE/setup-ubuntu.sh" "$ROOTFS/root/jarvis-setup.sh"
+  cp "$HERE/setup-ubuntu.sh" "$SHARED_TMP/jarvis-setup.sh"
 else
-  curl -fsSL "https://raw.githubusercontent.com/Sommer2019/jarvis/$BRANCH/termux/setup-ubuntu.sh" -o "$ROOTFS/root/jarvis-setup.sh"
+  curl -fsSL "https://raw.githubusercontent.com/Sommer2019/jarvis/$BRANCH/termux/setup-ubuntu.sh" -o "$SHARED_TMP/jarvis-setup.sh"
 fi
-proot-distro login "$DISTRO" --shared-tmp -- env JARVIS_REPO="$REPO" JARVIS_BRANCH="$BRANCH" bash /root/jarvis-setup.sh
+in_ubuntu env JARVIS_REPO="$REPO" JARVIS_BRANCH="$BRANCH" bash /tmp/jarvis-setup.sh
+rm -f "$SHARED_TMP/jarvis-setup.sh"
 
 say "Start-/Stopp-Skripte anlegen"
 cat > "$HOME/jarvis-start.sh" <<'SH'
@@ -86,10 +90,7 @@ command -v termux-reload-settings >/dev/null && termux-reload-settings || true
 
 bash "$HOME/jarvis-start.sh"
 
-TOKEN="$(cat "$ROOTFS/root/jarvis/data/web_token.txt" 2>/dev/null || true)"
-if [ -z "$TOKEN" ]; then
-  TOKEN="$(grep '^JARVIS_TOKEN=' "$ROOTFS/root/jarvis/.env" | cut -d= -f2-)"
-fi
+TOKEN="$(in_ubuntu sh -c "grep '^JARVIS_TOKEN=' /root/jarvis/.env | cut -d= -f2-" 2>/dev/null | tr -d '\r' || true)"
 if [ -n "$TOKEN" ] && command -v termux-clipboard-set >/dev/null; then
   printf "%s" "$TOKEN" | timeout 5 termux-clipboard-set && COPIED=" (in die Zwischenablage kopiert)" || true
 fi
