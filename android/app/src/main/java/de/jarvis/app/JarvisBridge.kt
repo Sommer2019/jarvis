@@ -17,6 +17,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.webkit.JavascriptInterface
 import org.json.JSONArray
 import org.json.JSONObject
@@ -35,18 +36,67 @@ class JarvisBridge(private val activity: MainActivity) {
     private var ttsReady = false
 
     init {
-        tts = TextToSpeech(activity) { status ->
+        initTts()
+    }
+
+    companion object {
+        const val GOOGLE_TTS = "com.google.android.tts"
+        const val SAMPLE = "Hallo, ich bin Jarvis. Wie kann ich dir helfen?"
+    }
+
+    /** Engine: gespeicherte Wahl → Google-Sprachausgabe (klingt am natürlichsten) → Systemstandard. */
+    fun initTts(engine: String? = null) {
+        tts?.shutdown()
+        ttsReady = false
+        val wanted = engine ?: activity.prefs.getString("tts_engine", null)
+            ?: GOOGLE_TTS.takeIf { isInstalled(it) }
+        tts = TextToSpeech(activity, { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {
                 tts?.setLanguage(Locale.GERMANY)
+                applyVoicePrefs()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
-                    override fun onDone(id: String?) = js("onSpeakDone")
+                    override fun onDone(id: String?) { if (id?.startsWith("jarvis-") == true) js("onSpeakDone") }
                     @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) = js("onSpeakDone")
+                    override fun onError(id: String?) { if (id?.startsWith("jarvis-") == true) js("onSpeakDone") }
                 })
             }
-        }
+        }, wanted)
+    }
+
+    private fun isInstalled(pkg: String) = try {
+        activity.packageManager.getPackageInfo(pkg, 0); true
+    } catch (e: Exception) { false }
+
+    fun hasGoogleTts() = isInstalled(GOOGLE_TTS)
+
+    /** Deutsche Stimmen, beste zuerst (Qualität, dann offline vor online). */
+    fun germanVoices(): List<Voice> = try {
+        (tts?.voices ?: emptySet())
+            .filter { it.locale.language == "de" &&
+                !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+            .sortedWith(compareByDescending<Voice> { it.quality }
+                .thenBy { it.isNetworkConnectionRequired }
+                .thenBy { it.name })
+    } catch (e: Exception) { emptyList() }
+
+    fun applyVoicePrefs() {
+        val t = tts ?: return
+        val name = activity.prefs.getString("tts_voice", null)
+        val voices = germanVoices()
+        (voices.firstOrNull { it.name == name } ?: voices.firstOrNull())?.let { runCatching { t.voice = it } }
+        t.setSpeechRate(activity.prefs.getFloat("tts_rate", 1.0f))
+        t.setPitch(activity.prefs.getFloat("tts_pitch", 1.0f))
+    }
+
+    /** Probe mit einer bestimmten Stimme/Einstellung, ohne sie zu speichern. */
+    fun preview(voice: Voice?, rate: Float, pitch: Float) {
+        val t = tts ?: return
+        voice?.let { runCatching { t.voice = it } }
+        t.setSpeechRate(rate)
+        t.setPitch(pitch)
+        t.speak(SAMPLE, TextToSpeech.QUEUE_FLUSH, null, "preview")
     }
 
     fun shutdown() {

@@ -186,7 +186,21 @@
       voices.find((v) => v.lang?.startsWith("de"));
   }
 
-  async function speak(text) {
+  // Emojis, Markdown und Links nicht vorlesen – das klingt sonst sehr seltsam
+  function speakable(text) {
+    return String(text || "")
+      .replace(/```[\s\S]*?```/g, " ")                       // Codeblöcke
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")                // [Text](Link) → Text
+      .replace(/https?:\/\/\S+/g, "")                          // nackte Links
+      .replace(/[*_`#>|~]+/g, " ")                             // Markdown-Zeichen
+      .replace(/^\s*[-•]\s+/gm, "")                            // Aufzählungspunkte
+      .replace(/[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\uFE0F\u200D\u20E3]/gu, "") // Emojis
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  async function speak(raw) {
+    const text = speakable(raw);
     setState("speaking");
     const done = () => { setState("idle"); if (handsfree) setTimeout(listen, 300); };
     if (native) {

@@ -48,7 +48,7 @@ class MainActivity : Activity() {
 
     lateinit var webView: WebView
     lateinit var bridge: JarvisBridge
-    private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    val prefs: android.content.SharedPreferences by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     private var pendingTalk = false
     private var startAttempts = 0
     private var pageLoaded = false
@@ -260,6 +260,10 @@ class MainActivity : Activity() {
             isChecked = shareLocation
         }
         layout.addView(locationBox)
+        layout.addView(android.widget.Button(this).apply {
+            text = "🔊 Stimme & Tempo einstellen"
+            setOnClickListener { showVoiceSettings() }
+        })
 
         AlertDialog.Builder(this)
             .setTitle("Jarvis verbinden")
@@ -326,6 +330,85 @@ class MainActivity : Activity() {
             showError("Oberfläche startet nicht", "Die Seite von $serverUrl kam an, aber die App-Oberfläche " +
                 "(JavaScript/CSS) lief nicht. Bitte schick diese Meldung an den Entwickler. $details")
         }
+    }
+
+    // ------------------------------------------------------------ Stimme
+    /** Auswahl der Vorlese-Stimme (mit Probe), Tempo und Tonhöhe. */
+    fun showVoiceSettings() {
+        val voices = bridge.germanVoices()
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0) }
+        val scroll = android.widget.ScrollView(this).apply { addView(layout) }
+
+        if (!bridge.hasGoogleTts()) {
+            layout.addView(TextView(this).apply {
+                text = "Tipp: Die „Sprachausgabe von Google“ klingt deutlich natürlicher als die Standardstimme vieler Handys."
+                setPadding(0, 0, 0, pad / 2)
+            })
+            layout.addView(android.widget.Button(this).apply {
+                text = "Google-Sprachausgabe installieren"
+                setOnClickListener { openUrl("market://details?id=${JarvisBridge.GOOGLE_TTS}") }
+            })
+        }
+
+        var selected: android.speech.tts.Voice? = voices.firstOrNull { it.name == prefs.getString("tts_voice", null) }
+            ?: voices.firstOrNull()
+        val group = android.widget.RadioGroup(this)
+        if (voices.isEmpty()) {
+            layout.addView(TextView(this).apply { text = "Keine deutsche Stimme gefunden. Installiere in den " +
+                "Android-Einstellungen unter „Sprachausgabe“ die deutschen Sprachdaten." })
+        }
+        voices.forEachIndexed { i, v ->
+            val quality = when {
+                v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> "sehr gut"
+                v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> "gut"
+                else -> "einfach"
+            }
+            group.addView(android.widget.RadioButton(this).apply {
+                id = 1000 + i
+                text = "Stimme ${('A' + i)} · $quality · ${if (v.isNetworkConnectionRequired) "online" else "offline"}"
+                isChecked = v == selected
+            })
+        }
+        layout.addView(group)
+
+        fun seek(label: String, value: Float): android.widget.SeekBar {
+            layout.addView(TextView(this).apply { text = label; setPadding(0, pad / 2, 0, 0) })
+            return android.widget.SeekBar(this).apply {
+                max = 100
+                progress = (((value - 0.5f) / 1.5f) * 100).toInt().coerceIn(0, 100)  // 0.5 … 2.0
+                layout.addView(this)
+            }
+        }
+        fun value(sb: android.widget.SeekBar) = 0.5f + sb.progress / 100f * 1.5f
+        val rate = seek("Tempo", prefs.getFloat("tts_rate", 1.0f))
+        val pitch = seek("Tonhöhe (links = tiefer)", prefs.getFloat("tts_pitch", 1.0f))
+
+        group.setOnCheckedChangeListener { _, checkedId ->
+            selected = voices.getOrNull(checkedId - 1000)
+            bridge.preview(selected, value(rate), value(pitch))
+        }
+        layout.addView(android.widget.Button(this).apply {
+            text = "▶ Probe hören"
+            setOnClickListener { bridge.preview(selected, value(rate), value(pitch)) }
+        })
+
+        AlertDialog.Builder(this)
+            .setTitle("Stimme von Jarvis")
+            .setView(scroll)
+            .setNeutralButton("System-Einstellungen") { _, _ ->
+                try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (e: Exception) { }
+            }
+            .setNegativeButton("Abbrechen") { _, _ -> bridge.applyVoicePrefs() }
+            .setPositiveButton("Übernehmen") { _, _ ->
+                prefs.edit()
+                    .putString("tts_voice", selected?.name)
+                    .putFloat("tts_rate", value(rate))
+                    .putFloat("tts_pitch", value(pitch))
+                    .apply()
+                bridge.applyVoicePrefs()
+            }
+            .show()
     }
 
     // ------------------------------------------------ Jarvis auf dem Handy
