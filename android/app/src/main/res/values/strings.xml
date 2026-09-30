@@ -2,4 +2,5 @@
 <resources>
     <string name="shortcut_talk">Sprechen</string>
     <string name="shortcut_talk_long">Mit Jarvis sprechen</string>
+    <string name="shortcut_settings">Einstellungen</string>
 </resources>

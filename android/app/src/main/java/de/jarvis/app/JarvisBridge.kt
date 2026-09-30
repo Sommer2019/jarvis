@@ -73,6 +73,16 @@ class JarvisBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun openSettings() = activity.runOnUiThread { activity.showSetup() }
 
+    @JavascriptInterface
+    fun retry() = activity.runOnUiThread { activity.loadApp() }
+
+    @JavascriptInterface
+    fun startTermux() = activity.runOnUiThread {
+        if (activity.startLocalServer()) activity.loadApp()
+        else activity.showError("Start nicht möglich", "Bitte in Termux ~/jarvis-start.sh ausführen oder der " +
+            "Jarvis-App die Berechtigung „Befehle in Termux ausführen“ geben.")
+    }
+
     // --------------------------------------------------------- Spracherkennung
     @JavascriptInterface
     fun startListening() = activity.runOnUiThread {
