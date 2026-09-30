@@ -27,6 +27,9 @@ ACTION_TYPES = {
     "alarm": "Wecker stellen (hour, minute, label)",
     "timer": "Timer starten (seconds, label)",
     "open_url": "Link öffnen (url)",
+    "calendar_add": "Termin im Handy-Kalender anlegen",
+    "calendar_update": "Termin im Handy-Kalender ändern",
+    "calendar_delete": "Termin im Handy-Kalender löschen",
 }
 
 
@@ -37,6 +40,7 @@ class PhoneStore:
         self.actions_file = self.dir / "phone_actions.json"
         self.app_file = self.dir / "phone_app.json"
         self.location_file = self.dir / "phone_location.json"
+        self.calendar_file = self.dir / "phone_calendar.json"
 
     # ---------------------------------------------------------------- app
     def register_app(self, info: dict) -> None:
@@ -109,6 +113,35 @@ class PhoneStore:
         when = "gerade eben" if age < 2 else f"vor {age} Min."
         return (f"{where} ({loc['lat']}, {loc['lon']}, ±{loc['accuracy_m']} m, {when}, "
                 f"Karte: https://maps.google.com/?q={loc['lat']},{loc['lon']})")
+
+    # ----------------------------------------------------------- Kalender
+    def save_calendar(self, calendars: list[dict], events: list[dict]) -> int:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.calendar_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"updated": int(time.time()), "calendars": calendars, "events": events},
+                                  ensure_ascii=False))
+        os.replace(tmp, self.calendar_file)
+        return len(events)
+
+    def calendar(self) -> dict | None:
+        if not self.calendar_file.exists():
+            return None
+        return json.loads(self.calendar_file.read_text())
+
+    def resolve_calendar(self, name: str = "") -> dict:
+        """Kalender nach Name/Konto finden; ohne Name: primärer beschreibbarer Kalender."""
+        cal = self.calendar() or {}
+        writable = [c for c in cal.get("calendars", []) if c.get("writable")]
+        if not writable:
+            raise RuntimeError("Kein beschreibbarer Handy-Kalender bekannt (App öffnen, Kalender teilen aktivieren)")
+        if name:
+            n = name.lower()
+            for c in writable:
+                if n in (c.get("name", "") + " " + c.get("account", "")).lower():
+                    return c
+            raise ValueError(f"Kalender '{name}' nicht gefunden. Vorhanden: "
+                             + ", ".join(c.get("name", "?") for c in writable))
+        return next((c for c in writable if c.get("primary")), writable[0])
 
     # ------------------------------------------------------------ actions
     @contextmanager

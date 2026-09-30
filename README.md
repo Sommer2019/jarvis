@@ -111,6 +111,13 @@ Nutzt du kein Google, setz `GOOGLE_ENABLED=false` und nimm CalDAV (Schritt 3b).
 
 ### 3a. E-Mail bei anderen Anbietern (IMAP/SMTP)
 
+**Am einfachsten mit dem Assistenten:** `jarvis mail-setup` (auf dem Handy im Ubuntu-Shell,
+`~/jarvis-shell.sh`). Er kennt Gmail, GMX, Web.de, Outlook, iCloud, T-Online, Yahoo, Posteo und
+mailbox.org, erklärt das nötige App-Passwort, prüft die Anmeldung sofort und speichert alles. Für
+weitere Konten führst du ihn einfach nochmal aus.
+
+Von Hand geht es so:
+
 Trag in `.env` die Werte deines Anbieters ein. Nutze wenn möglich ein **App-Passwort**:
 
 | Anbieter | `IMAP_HOST` | `SMTP_HOST` : `SMTP_PORT` | Hinweis |
@@ -258,6 +265,14 @@ Actions): `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_A
 Setzt du dort das Häkchen „Handy-Kontakte teilen“, lädt die App deine Kontakte etwa alle 12 Stunden
 auf **deinen eigenen** Jarvis-Server (`data/phone_contacts.json`). Sie gehen nirgendwo anders hin.
 Über ⚙ oben rechts kommst du jederzeit wieder in die Einstellungen.
+
+**Handy-Kalender:** Mit dem Häkchen „Handy-Kalender mit Jarvis teilen“ nutzt Jarvis die Kalender, die
+auf deinem Handy eingerichtet sind (Google, Outlook, Samsung …), ganz ohne eigenes Google-Setup. Die
+App schickt beim Öffnen die Termine der letzten 7 und der nächsten 90 Tage an deinen Jarvis-Server.
+Neue Termine trägt die App direkt in den Android-Kalender ein, von dort synchronisieren sie wie gewohnt.
+
+**Gmail über die Gmail-App?** Das geht leider nicht: Die Gmail-App lässt keine anderen Apps an die
+Mails. Für Gmail nimmst du stattdessen `jarvis mail-setup` → Gmail (App-Passwort, 2 Minuten).
 
 **Standort:** Setzt du in den App-Einstellungen das Häkchen „Standort mit Jarvis teilen“, schickt die
 App bei jeder Anfrage deinen aktuellen Ort mit. Die Adresse wird auf dem Handy selbst ermittelt, ohne

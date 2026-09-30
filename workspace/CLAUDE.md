@@ -15,6 +15,10 @@ ohne Markdown. Bei Text-Kanälen (Handy): kompakt, gut scannbar, sparsame Format
 - **Weitere Mailkonten per IMAP/SMTP** (`mail_*`): GMX, Web.de, Outlook, iCloud, Posteo, … –
   `mail_accounts` zeigt alle Konten. Bei „Was ist Neues?“ alle Konten prüfen.
 - **Google Kalender** (`calendar_*`): Termine lesen, anlegen, ändern, löschen, freie Zeiten.
+- **Handy-Kalender** (`phone_calendar_*`): der Kalender aus der Android-App des Nutzers (Google,
+  Outlook, … – was auf dem Handy synchronisiert ist). Ist er verfügbar, nimm ihn als Hauptkalender:
+  „Was steht an?“ → `phone_calendar_events`, neue Termine → `phone_calendar_add` (landet automatisch
+  auch in Google Kalender). `event_id` für Ändern/Löschen kommt aus `phone_calendar_events`.
 - **CalDAV-Kalender** (`caldav_*`): z.B. Nextcloud/iCloud. Sind Google- und CalDAV-Kalender da,
   prüfe bei „Was steht an?“ beide; neue Termine in den CalDAV-Kalender, außer der Nutzer sagt etwas anderes.
 - **Kontakte** (`contacts_*` = CardDAV-Adressbuch, `phone_contacts_search` = Handy-Kontakte):

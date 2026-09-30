@@ -121,6 +121,9 @@
     alarm: (p) => `⏰ Wecker ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`,
     timer: (p) => `⏱️ Timer ${Math.round(p.seconds / 60)} min`,
     open_url: (p) => `🔗 ${p.url}`,
+    calendar_add: (p) => `📅 Termin „${p.title}“ eingetragen`,
+    calendar_update: () => "📅 Termin geändert",
+    calendar_delete: () => "📅 Termin gelöscht",
   };
 
   // Browser-Fallback: Links, die Android/iOS selbst öffnen können
@@ -146,7 +149,10 @@
     for (const a of actions || []) {
       if (done.has(a.id)) continue;
       if (native) {
-        if (native.runAction(JSON.stringify(a))) { ack(a); add("✔ " + (ACTION_LABELS[a.type]?.(a.params) || a.type), "bot", "action"); }
+        const label = ACTION_LABELS[a.type]?.(a.params) || a.type;
+        if (native.runAction(JSON.stringify(a))) add("✔ " + label, "bot", "action");
+        else add("⚠️ Hat nicht geklappt: " + label + " (Berechtigung in der App erteilt?)", "bot", "err");
+        ack(a);
         continue;
       }
       const href = actionLink(a);
