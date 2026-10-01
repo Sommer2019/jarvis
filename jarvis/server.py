@@ -56,6 +56,7 @@ class ChatIn(BaseModel):
 
 class TTSIn(BaseModel):
     text: str
+    rate: float = 1.0
 
 
 class PhoneContact(BaseModel):
@@ -266,7 +267,9 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
     async def speak(body: TTSIn):
         if not tts.available(cfg):
             raise HTTPException(501, "Piper nicht eingerichtet")
-        return Response(await tts.synthesize(body.text, cfg), media_type="audio/wav")
+        if not body.text.strip():
+            raise HTTPException(400, "Leerer Text")
+        return Response(await tts.synthesize(body.text[:3000], cfg, body.rate), media_type="audio/wav")
 
     @app.post("/api/reset", dependencies=[Depends(auth)])
     async def reset(conversation: str = "web"):

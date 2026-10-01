@@ -453,6 +453,21 @@ class MainActivity : Activity() {
         var selected: android.speech.tts.Voice? = voices.firstOrNull { it.name == prefs.getString("tts_voice", null) }
             ?: voices.firstOrNull()
         val group = android.widget.RadioGroup(this)
+        val serverId = 999
+        var useServer = prefs.getBoolean("tts_server", true) && bridge.serverVoiceAvailable
+        group.addView(android.widget.RadioButton(this).apply {
+            id = serverId
+            text = if (bridge.serverVoiceAvailable) "★ Natürliche Stimme „Thorsten“ (Jarvis-Server) · beste Qualität"
+                else "★ Natürliche Stimme „Thorsten“ (Jarvis-Server) · noch nicht eingerichtet"
+            isChecked = useServer
+        })
+        if (!bridge.serverVoiceAvailable) {
+            layout.addView(TextView(this).apply {
+                text = "Die schönste Stimme läuft auf deinem Jarvis-Server (kostenlos, offline): dort einmal " +
+                    "„jarvis voice-setup“ ausführen (Handy: ~/jarvis-shell.sh) und Jarvis neu starten."
+                setPadding(0, 0, 0, pad / 2)
+            })
+        }
         if (voices.isEmpty()) {
             layout.addView(TextView(this).apply { text = "Keine deutsche Stimme gefunden. Installiere in den " +
                 "Android-Einstellungen unter „Sprachausgabe“ die deutschen Sprachdaten." })
@@ -466,7 +481,7 @@ class MainActivity : Activity() {
             group.addView(android.widget.RadioButton(this).apply {
                 id = 1000 + i
                 text = "Stimme ${('A' + i)} · $quality · ${if (v.isNetworkConnectionRequired) "online" else "offline"}"
-                isChecked = v == selected
+                isChecked = !useServer && v == selected
             })
         }
         layout.addView(group)
@@ -480,16 +495,24 @@ class MainActivity : Activity() {
             }
         }
         fun value(sb: android.widget.SeekBar) = 0.5f + sb.progress / 100f * 1.5f
-        val rate = seek("Tempo", prefs.getFloat("tts_rate", 1.0f))
+        val oldRate = prefs.getFloat("tts_rate", 1.0f)
+        val rate = seek("Tempo", oldRate)
         val pitch = seek("Tonhöhe (links = tiefer)", prefs.getFloat("tts_pitch", 1.0f))
 
+        fun playPreview() {
+            if (useServer) {
+                prefs.edit().putFloat("tts_rate", value(rate)).apply()  // Tempo gilt auch für die Server-Stimme
+                bridge.previewServerVoice()
+            } else bridge.preview(selected, value(rate), value(pitch))
+        }
         group.setOnCheckedChangeListener { _, checkedId ->
-            selected = voices.getOrNull(checkedId - 1000)
-            bridge.preview(selected, value(rate), value(pitch))
+            useServer = checkedId == serverId
+            if (!useServer) selected = voices.getOrNull(checkedId - 1000)
+            playPreview()
         }
         layout.addView(android.widget.Button(this).apply {
             text = "▶ Probe hören"
-            setOnClickListener { bridge.preview(selected, value(rate), value(pitch)) }
+            setOnClickListener { playPreview() }
         })
 
         AlertDialog.Builder(this)
@@ -498,9 +521,13 @@ class MainActivity : Activity() {
             .setNeutralButton("System-Einstellungen") { _, _ ->
                 try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (e: Exception) { }
             }
-            .setNegativeButton("Abbrechen") { _, _ -> bridge.applyVoicePrefs() }
+            .setNegativeButton("Abbrechen") { _, _ ->
+                prefs.edit().putFloat("tts_rate", oldRate).apply()
+                bridge.applyVoicePrefs()
+            }
             .setPositiveButton("Übernehmen") { _, _ ->
                 prefs.edit()
+                    .putBoolean("tts_server", useServer)
                     .putString("tts_voice", selected?.name)
                     .putFloat("tts_rate", value(rate))
                     .putFloat("tts_pitch", value(pitch))

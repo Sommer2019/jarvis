@@ -3,7 +3,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 REPO="${JARVIS_REPO:-https://github.com/Sommer2019/jarvis.git}"
-BRANCH="${JARVIS_BRANCH:-master}"
+BRANCH="${JARVIS_BRANCH:-}"   # leer = Standard-Branch des Repos
 DIR="${JARVIS_DIR:-/root/jarvis}"
 
 say() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
@@ -26,6 +26,11 @@ grep -q '.local/bin' /root/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.loca
 claude --version
 
 say "Jarvis herunterladen"
+# Branch fehlt (z.B. nach dem Mergen gelöscht) oder nicht angegeben → Standard-Branch nehmen
+if [ -z "$BRANCH" ] || ! git ls-remote --exit-code --heads "$REPO" "$BRANCH" >/dev/null 2>&1; then
+  BRANCH="$(git ls-remote --symref "$REPO" HEAD | awk '/^ref:/ {sub("refs/heads/", "", $2); print $2}')"
+  echo "Branch: $BRANCH (Standard-Branch)"
+fi
 if [ -d "$DIR/.git" ]; then
   # auch flache Ein-Branch-Klone auf den gewünschten Branch umstellen
   git -C "$DIR" remote set-url origin "$REPO"

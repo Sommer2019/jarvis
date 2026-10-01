@@ -3,7 +3,7 @@
 #  Jarvis komplett auf dem Handy – Installer für Termux
 #
 #  In Termux (aus F-Droid, NICHT Play Store) ausführen:
-#    curl -fsSL https://raw.githubusercontent.com/Sommer2019/jarvis/master/termux/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/Sommer2019/jarvis/HEAD/termux/install.sh | bash
 #  oder nach dem Klonen:  bash termux/install.sh
 #
 #  Richtet ein: Ubuntu-Umgebung (proot-distro) mit Claude Code + Jarvis,
@@ -17,7 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 CLONE_REPO="$(git -C "$HERE/.." remote get-url origin 2>/dev/null || true)"
 CLONE_BRANCH="$(git -C "$HERE/.." rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 REPO="${JARVIS_REPO:-${CLONE_REPO:-https://github.com/Sommer2019/jarvis.git}}"
-BRANCH="${JARVIS_BRANCH:-${CLONE_BRANCH:-master}}"
+BRANCH="${JARVIS_BRANCH:-${CLONE_BRANCH:-}}"   # leer = Standard-Branch auf GitHub
 DISTRO=ubuntu
 
 say() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
@@ -40,7 +40,7 @@ mkdir -p "$SHARED_TMP"
 if [ -n "$HERE" ] && [ -f "$HERE/setup-ubuntu.sh" ]; then
   cp "$HERE/setup-ubuntu.sh" "$SHARED_TMP/jarvis-setup.sh"
 else
-  curl -fsSL "https://raw.githubusercontent.com/Sommer2019/jarvis/$BRANCH/termux/setup-ubuntu.sh" -o "$SHARED_TMP/jarvis-setup.sh"
+  curl -fsSL "https://raw.githubusercontent.com/Sommer2019/jarvis/${BRANCH:-HEAD}/termux/setup-ubuntu.sh" -o "$SHARED_TMP/jarvis-setup.sh"
 fi
 in_ubuntu env JARVIS_REPO="$REPO" JARVIS_BRANCH="$BRANCH" bash /tmp/jarvis-setup.sh
 rm -f "$SHARED_TMP/jarvis-setup.sh"
@@ -64,14 +64,22 @@ echo "$BRANCH" > "$HOME/.jarvis-branch"
 cat > "$HOME/jarvis-update.sh" <<'SH'
 #!/data/data/com.termux/files/usr/bin/bash
 # Holt die neueste Jarvis-Version (in die Ubuntu-Umgebung, aus der Jarvis läuft) und startet neu
-B="$(cat "$HOME/.jarvis-branch" 2>/dev/null || echo master)"
+B="$(cat "$HOME/.jarvis-branch" 2>/dev/null || true)"
 bash "$HOME/jarvis-stop.sh" || true
-proot-distro login ubuntu --shared-tmp -- env B="$B" bash -lc 'cd /root/jarvis \
-  && git remote set-branches --add origin "$B" \
-  && git fetch --depth 1 origin "+refs/heads/$B:refs/remotes/origin/$B" \
-  && git checkout -q -B "$B" "origin/$B" \
-  && .venv/bin/pip install -q -e . \
-  && echo "Jarvis aktualisiert: $(git log -1 --format="%h %s")"'
+proot-distro login ubuntu --shared-tmp -- env B="$B" bash -s <<'IN'
+set -e
+cd /root/jarvis
+# gemerkter Branch gelöscht (z.B. nach einem Merge)? → Standard-Branch von GitHub
+if [ -z "$B" ] || ! git ls-remote --exit-code --heads origin "$B" >/dev/null 2>&1; then
+  B="$(git ls-remote --symref origin HEAD | awk '/^ref:/ {sub("refs/heads/", "", $2); print $2}')"
+  echo "Branch: $B (Standard-Branch)"
+fi
+git remote set-branches --add origin "$B"
+git fetch --depth 1 origin "+refs/heads/$B:refs/remotes/origin/$B"
+git checkout -q -B "$B" "origin/$B"
+.venv/bin/pip install -q -e .
+echo "Jarvis aktualisiert: $(git log -1 --format="%h %s")"
+IN
 bash "$HOME/jarvis-start.sh"
 SH
 cat > "$HOME/jarvis-login.sh" <<'SH'
