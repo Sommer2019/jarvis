@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import secrets
@@ -15,6 +16,8 @@ from pydantic import BaseModel
 from . import stt, tts
 from .brain import Brain
 from .config import Config
+from .files import FileStore
+from .pcstore import PcStore
 from .phone import PhoneStore
 
 log = logging.getLogger("jarvis.server")
@@ -65,10 +68,57 @@ class PhoneContactsIn(BaseModel):
     contacts: list[PhoneContact]
 
 
+class PcHello(BaseModel):
+    device: str
+    system: str = ""
+    commands: list[str] = []
+    version: str = ""
+
+
+class ActionDone(BaseModel):
+    ok: bool = True
+    result: object = None
+
+
+class PhoneCalendar(BaseModel):
+    id: int
+    name: str = ""
+    account: str = ""
+    writable: bool = False
+    primary: bool = False
+
+
+class PhoneEvent(BaseModel):
+    event_id: int
+    calendar_id: int
+    title: str = ""
+    start: int  # Unix-Millisekunden
+    end: int
+    all_day: bool = False
+    location: str = ""
+    description: str = ""
+
+
+class PhoneCalendarIn(BaseModel):
+    calendars: list[PhoneCalendar]
+    events: list[PhoneEvent]
+
+
 def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAPI:
     brain = brain or Brain(cfg)
     token = resolve_token(cfg)
     phone = PhoneStore(cfg.data_dir)
+    pcs = PcStore(cfg.data_dir)
+    files = FileStore(cfg.workspace, cfg.data_dir)
+
+    async def long_poll(fetch, wait: int):
+        """Wartet bis zu `wait` Sekunden auf neue Aufgaben (spart Akku/Traffic gegenüber Dauerabfragen)."""
+        items = fetch()
+        end = asyncio.get_running_loop().time() + max(0, min(wait, 30))
+        while not items and asyncio.get_running_loop().time() < end:
+            await asyncio.sleep(1)
+            items = fetch()
+        return items
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
 
     def from_app(request: Request) -> bool:
@@ -119,19 +169,62 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
         from_app(request)
         return {"saved": phone.save_contacts([c.model_dump() for c in body.contacts])}
 
+    @app.post("/api/phone/calendar", dependencies=[Depends(auth)])
+    async def phone_calendar(body: PhoneCalendarIn, request: Request):
+        from_app(request)
+        n = phone.save_calendar([c.model_dump() for c in body.calendars],
+                                [e.model_dump() for e in body.events])
+        return {"saved": n}
+
     @app.post("/api/phone/location", dependencies=[Depends(auth)])
     async def phone_location(body: LocationIn, request: Request):
         from_app(request)
         return phone.save_location(body.model_dump())
 
     @app.get("/api/phone/actions", dependencies=[Depends(auth)])
-    async def phone_actions(request: Request):
+    async def phone_actions(request: Request, wait: int = 0):
         from_app(request)
-        return {"actions": phone.pending()}
+        return {"actions": await long_poll(phone.pending, wait)}
 
     @app.post("/api/phone/actions/{action_id}/done", dependencies=[Depends(auth)])
     async def phone_action_done(action_id: str):
         return {"ok": phone.done(action_id)}
+
+    # --------------------------------------------------------------- PC
+    @app.post("/api/pc/hello", dependencies=[Depends(auth)])
+    async def pc_hello(body: PcHello):
+        return pcs.register(body.model_dump())
+
+    @app.get("/api/pc/actions", dependencies=[Depends(auth)])
+    async def pc_actions(device: str, wait: int = 0):
+        pcs.touch(device)
+        return {"actions": await long_poll(lambda: pcs.queue.pending(device), wait)}
+
+    @app.post("/api/pc/actions/{action_id}/done", dependencies=[Depends(auth)])
+    async def pc_action_done(action_id: str, body: ActionDone):
+        return {"ok": pcs.queue.done(action_id, body.result, body.ok)}
+
+    # ----------------------------------------------------------- Dateien
+    @app.post("/api/files", dependencies=[Depends(auth)])
+    async def file_upload(file: UploadFile = File(...), source: str = Form("")):
+        from urllib.parse import unquote
+
+        try:
+            meta = await asyncio.to_thread(files.save, file.file, unquote(file.filename or "datei"), source)
+        except ValueError as e:
+            raise HTTPException(413, str(e))
+        return meta
+
+    @app.get("/api/files", dependencies=[Depends(auth)])
+    async def file_list():
+        return {"files": files.list()}
+
+    @app.get("/api/files/{file_id}", dependencies=[Depends(auth)])
+    async def file_download(file_id: str):
+        meta = files.get(file_id)
+        if not meta or not files.path(meta).exists():
+            raise HTTPException(404, "Datei nicht (mehr) vorhanden")
+        return FileResponse(files.path(meta), filename=meta["name"], media_type=meta["mime"])
 
     # ---------------------------------------------------------- WhatsApp
     @app.get("/webhook/whatsapp")

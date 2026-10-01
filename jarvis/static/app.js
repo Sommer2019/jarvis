@@ -76,9 +76,22 @@
     });
   }
 
+  let lastCall = null;      // Text eines angenommenen Jarvis-Anrufs
+  let attachments = [];     // per „Teilen → Jarvis“ hochgeladene Dateien
+  let listenAfterSpeak = false;
+
   async function send(text, voice) {
     if (!text.trim() || busy) return;
     add(text, "me");
+    if (lastCall) {           // Jarvis weiß so, worauf sich die Antwort bezieht
+      text = `(Antwort auf deinen Anruf: „${lastCall}“) ${text}`;
+      lastCall = null;
+    }
+    if (attachments.length) { // Jarvis bekommt Name + Ablageort der geteilten Dateien
+      const info = attachments.map((f) => `${f.name} (file_id ${f.id}, ${f.workspace_path})`).join("; ");
+      text = `[Datei(en) vom Handy: ${info}] ${text}`;
+      attachments = [];
+    }
     busy = true; setState("busy");
     const pending = add("…", "bot", "pending");
     try {
@@ -121,6 +134,10 @@
     alarm: (p) => `⏰ Wecker ${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`,
     timer: (p) => `⏱️ Timer ${Math.round(p.seconds / 60)} min`,
     open_url: (p) => `🔗 ${p.url}`,
+    calendar_add: (p) => `📅 Termin „${p.title}“ eingetragen`,
+    calendar_update: () => "📅 Termin geändert",
+    calendar_delete: () => "📅 Termin gelöscht",
+    file: (p) => `📄 ${p.name} – Download gestartet (Downloads/Jarvis)`,
   };
 
   // Browser-Fallback: Links, die Android/iOS selbst öffnen können
@@ -133,6 +150,7 @@
       case "whatsapp": return `https://wa.me/${digits(p.number).replace("+", "")}?text=${encodeURIComponent(p.text || "")}`;
       case "navigate": return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.destination || "");
       case "open_url": return p.url;
+      case "file": return `/api/files/${encodeURIComponent(p.file_id)}?token=${encodeURIComponent(token)}`;
       default: return null; // Wecker/Timer gehen nur in der App
     }
   }
@@ -142,11 +160,46 @@
     await api(`/api/phone/actions/${a.id}/done`, { method: "POST" }).catch(() => {});
   }
 
+  // Nachricht bzw. angenommener „Anruf“ von Jarvis
+  function showJarvisMessage(text) {
+    add("📣 " + text, "bot");
+  }
+  function incomingCall(text) {
+    add("📞 " + text, "bot");
+    lastCall = text;
+    listenAfterSpeak = true;   // nach dem Vorlesen auf deine Antwort hören
+    if (!muted) speak(text); else listen();
+  }
+  window.JarvisNative = window.JarvisNative || {};
+  window.JarvisNative.incomingCall = incomingCall;
+  window.JarvisNative.showMessage = showJarvisMessage;
+  // „Teilen → Jarvis“: die App hat die Dateien schon hochgeladen
+  window.JarvisNative.filesShared = (metas) => {
+    for (const f of metas || []) {
+      attachments.push(f);
+      add(`📎 ${f.name} (${f.size_kb} KB) – sag Jarvis, was damit passieren soll`, "bot", "action");
+    }
+    $("text").focus();
+  };
+  window.JarvisNative.prefill = (t) => { $("text").value = t; $("text").focus(); };
+
   function handleActions(actions) {
     for (const a of actions || []) {
       if (done.has(a.id)) continue;
+      if (a.type === "file" && native && native.backgroundActive && native.backgroundActive()) continue;
+      if (a.type === "notify" || a.type === "ring") {
+        // Mit Hintergrund-Verbindung zeigt die App das selbst als Benachrichtigung/Anruf
+        if (native && native.backgroundActive && native.backgroundActive()) continue;
+        ack(a);
+        const text = (a.params && a.params.text) || "";
+        a.type === "ring" ? incomingCall(text) : showJarvisMessage(text);
+        continue;
+      }
       if (native) {
-        if (native.runAction(JSON.stringify(a))) { ack(a); add("✔ " + (ACTION_LABELS[a.type]?.(a.params) || a.type), "bot", "action"); }
+        const label = ACTION_LABELS[a.type]?.(a.params) || a.type;
+        if (native.runAction(JSON.stringify(a))) add("✔ " + label, "bot", "action");
+        else add("⚠️ Hat nicht geklappt: " + label + " (Berechtigung in der App erteilt?)", "bot", "err");
+        ack(a);
         continue;
       }
       const href = actionLink(a);
@@ -154,7 +207,8 @@
       const el = document.createElement("a");
       el.className = "msg bot action-btn";
       el.href = href; el.target = "_blank"; el.rel = "noopener";
-      el.textContent = ACTION_LABELS[a.type]?.(a.params) || a.type;
+      el.textContent = a.type === "file" ? `📄 ${a.params.name} herunterladen` : (ACTION_LABELS[a.type]?.(a.params) || a.type);
+      if (a.type === "file") el.download = a.params.name || "";
       el.onclick = () => ack(a);
       log.appendChild(el);
       done.add(a.id);
@@ -186,9 +240,26 @@
       voices.find((v) => v.lang?.startsWith("de"));
   }
 
-  async function speak(text) {
+  // Emojis, Markdown und Links nicht vorlesen – das klingt sonst sehr seltsam
+  function speakable(text) {
+    return String(text || "")
+      .replace(/```[\s\S]*?```/g, " ")                       // Codeblöcke
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")                // [Text](Link) → Text
+      .replace(/https?:\/\/\S+/g, "")                          // nackte Links
+      .replace(/[*_`#>|~]+/g, " ")                             // Markdown-Zeichen
+      .replace(/^\s*[-•]\s+/gm, "")                            // Aufzählungspunkte
+      .replace(/[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\uFE0F\u200D\u20E3]/gu, "") // Emojis
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  async function speak(raw) {
+    const text = speakable(raw);
     setState("speaking");
-    const done = () => { setState("idle"); if (handsfree) setTimeout(listen, 300); };
+    const done = () => {
+      setState("idle");
+      if (handsfree || listenAfterSpeak) { listenAfterSpeak = false; setTimeout(listen, 300); }
+    };
     if (native) {
       window.JarvisNative.onSpeakDone = done;
       native.speak(text);

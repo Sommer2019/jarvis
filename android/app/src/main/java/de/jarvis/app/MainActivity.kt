@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.ViewGroup
@@ -34,11 +35,16 @@ class MainActivity : Activity() {
     companion object {
         const val ACTION_TALK = "de.jarvis.app.TALK"
         const val ACTION_SETTINGS = "de.jarvis.app.SETTINGS"
+        const val ACTION_ANSWER = "de.jarvis.app.ANSWER"
+        const val ACTION_MESSAGE = "de.jarvis.app.MESSAGE"
+        const val REQ_NOTIFY = 6
+        @Volatile var visible = false
         const val LOAD_TIMEOUT_MS = 20_000L
         const val REQ_AUDIO = 1
         const val REQ_CONTACTS = 2
         const val REQ_TERMUX = 3
         const val REQ_LOCATION = 4
+        const val REQ_CALENDAR = 5
         const val PREFS = "jarvis"
         const val LOCAL_URL = "http://127.0.0.1:8080"
         const val TERMUX = "com.termux"
@@ -48,10 +54,12 @@ class MainActivity : Activity() {
 
     lateinit var webView: WebView
     lateinit var bridge: JarvisBridge
-    private val prefs by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
+    val prefs: android.content.SharedPreferences by lazy { getSharedPreferences(PREFS, Context.MODE_PRIVATE) }
     private var pendingTalk = false
     private var startAttempts = 0
     private var pageLoaded = false
+    /** Angenommener Jarvis-Anruf / angetippte Nachricht, die an die Oberfläche geht, sobald sie bereit ist. */
+    private var pendingJs: String? = null
     private var mainFrameError = false
     private val watchdog = Runnable {
         if (!pageLoaded) {
@@ -68,6 +76,7 @@ class MainActivity : Activity() {
     val shareContacts: Boolean get() = prefs.getBoolean("share_contacts", false)
     val localMode: Boolean get() = prefs.getBoolean("local_mode", false)
     val shareLocation: Boolean get() = prefs.getBoolean("share_location", false)
+    val shareCalendar: Boolean get() = prefs.getBoolean("share_calendar", false)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,6 +110,10 @@ class MainActivity : Activity() {
             }
         }
 
+        JarvisService.channels(this)
+        JarvisService.start(this)
+        takeCallIntent(intent)
+        takeShareIntent(intent)
         pendingTalk = isTalkIntent(intent)
         if (serverUrl.isEmpty()) showSetup() else {
             loadApp()
@@ -112,6 +125,70 @@ class MainActivity : Activity() {
     }
 
     private fun isSettingsIntent(i: Intent?): Boolean = i?.action == ACTION_SETTINGS
+
+    /** Anruf angenommen / Nachricht angetippt → Text an die Weboberfläche übergeben. */
+    private fun takeCallIntent(i: Intent?): Boolean {
+        val text = i?.getStringExtra("text") ?: return false
+        val fn = when (i.action) {
+            ACTION_ANSWER -> "incomingCall"
+            ACTION_MESSAGE -> "showMessage"
+            else -> return false
+        }
+        getSystemService(android.app.NotificationManager::class.java).cancel(IncomingCallActivity.NOTIFICATION_ID)
+        pendingJs = "window.JarvisNative && window.JarvisNative.$fn && window.JarvisNative.$fn(${org.json.JSONObject.quote(text)})"
+        return true
+    }
+
+    /** „Teilen → Jarvis“: Dateien hochladen bzw. geteilten Text ins Eingabefeld übernehmen. */
+    private fun takeShareIntent(i: Intent?): Boolean {
+        if (i?.action != Intent.ACTION_SEND && i?.action != Intent.ACTION_SEND_MULTIPLE) return false
+        @Suppress("DEPRECATION")
+        val uris: List<Uri> = if (i.action == Intent.ACTION_SEND_MULTIPLE)
+            i.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: emptyList()
+        else listOfNotNull(i.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+        if (uris.isEmpty()) {
+            val text = i.getStringExtra(Intent.EXTRA_TEXT) ?: return true
+            pendingJs = "window.JarvisNative && window.JarvisNative.prefill && window.JarvisNative.prefill(${org.json.JSONObject.quote(text)})"
+            deliverPendingJs()
+            return true
+        }
+        if (serverUrl.isEmpty()) {
+            Toast.makeText(this, "Bitte Jarvis zuerst einrichten.", Toast.LENGTH_LONG).show()
+            return true
+        }
+        Toast.makeText(this, "Wird an Jarvis geschickt …", Toast.LENGTH_SHORT).show()
+        Thread {
+            val metas = org.json.JSONArray()
+            for (u in uris.take(10)) {
+                try { metas.put(Api.uploadUri(this, u)) } catch (e: Exception) {
+                    runOnUiThread { Toast.makeText(this, "Hochladen fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show() }
+                }
+            }
+            if (metas.length() > 0) runOnUiThread {
+                pendingJs = "window.JarvisNative && window.JarvisNative.filesShared && window.JarvisNative.filesShared(${metas})"
+                deliverPendingJs()
+            }
+        }.start()
+        return true
+    }
+
+    private fun deliverPendingJs() {
+        val js = pendingJs ?: return
+        if (!pageLoaded) return  // kommt nach dem Laden (checkUiReady)
+        pendingJs = null
+        webView.evaluateJavascript(js, null)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        visible = true
+        if (serverUrl.isNotEmpty()) maybeSyncCalendar()
+    }
+
+    override fun onPause() {
+        visible = false
+        super.onPause()
+    }
 
     private fun isTalkIntent(i: Intent?): Boolean =
         i?.action in setOf(ACTION_TALK, Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND)
@@ -126,6 +203,7 @@ class MainActivity : Activity() {
         pendingTalk = false
         checkServer { loadServer(withVoice = voice) }
         maybeSyncContacts()
+        maybeSyncCalendar()
     }
 
     /**
@@ -200,6 +278,11 @@ class MainActivity : Activity() {
             showSetup()
             return
         }
+        if (takeCallIntent(intent)) {
+            deliverPendingJs()
+            return
+        }
+        if (takeShareIntent(intent)) return
         if (isTalkIntent(intent)) {
             webView.evaluateJavascript("window.JarvisNative && window.JarvisNative.listen && window.JarvisNative.listen()", null)
         }
@@ -260,6 +343,20 @@ class MainActivity : Activity() {
             isChecked = shareLocation
         }
         layout.addView(locationBox)
+        val calendarBox = CheckBox(this).apply {
+            text = "Handy-Kalender mit Jarvis teilen (lesen + Termine eintragen)"
+            isChecked = shareCalendar
+        }
+        layout.addView(calendarBox)
+        val backgroundBox = CheckBox(this).apply {
+            text = "Im Hintergrund verbunden bleiben (Nachrichten & Anrufe von Jarvis, auch wenn die App zu ist)"
+            isChecked = JarvisService.enabled(this@MainActivity)
+        }
+        layout.addView(backgroundBox)
+        layout.addView(android.widget.Button(this).apply {
+            text = "🔊 Stimme & Tempo einstellen"
+            setOnClickListener { showVoiceSettings() }
+        })
 
         AlertDialog.Builder(this)
             .setTitle("Jarvis verbinden")
@@ -289,12 +386,17 @@ class MainActivity : Activity() {
                     .putString("token", tokenField.text.toString().trim())
                     .putBoolean("share_contacts", contactsBox.isChecked)
                     .putBoolean("share_location", locationBox.isChecked)
+                    .putBoolean("share_calendar", calendarBox.isChecked)
+                    .putBoolean("background", backgroundBox.isChecked)
+                    .putLong("calendar_synced", 0)
                     .putLong("contacts_synced", 0)
                     .apply()
                 if (locationBox.isChecked && !hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) {
                     requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,
                         Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
                 }
+                if (calendarBox.isChecked) requestCalendarPermission()
+                if (backgroundBox.isChecked) enableBackground() else JarvisService.stop(this)
                 if (url.isEmpty()) showSetup("Bitte eine Server-Adresse eingeben.") else loadApp()
             }
             .show()
@@ -313,6 +415,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) { null }
             if (info?.optBoolean("ready") == true) {
                 pageLoaded = true
+                deliverPendingJs()
                 return@evaluateJavascript
             }
             val details = buildString {
@@ -326,6 +429,85 @@ class MainActivity : Activity() {
             showError("Oberfläche startet nicht", "Die Seite von $serverUrl kam an, aber die App-Oberfläche " +
                 "(JavaScript/CSS) lief nicht. Bitte schick diese Meldung an den Entwickler. $details")
         }
+    }
+
+    // ------------------------------------------------------------ Stimme
+    /** Auswahl der Vorlese-Stimme (mit Probe), Tempo und Tonhöhe. */
+    fun showVoiceSettings() {
+        val voices = bridge.germanVoices()
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0) }
+        val scroll = android.widget.ScrollView(this).apply { addView(layout) }
+
+        if (!bridge.hasGoogleTts()) {
+            layout.addView(TextView(this).apply {
+                text = "Tipp: Die „Sprachausgabe von Google“ klingt deutlich natürlicher als die Standardstimme vieler Handys."
+                setPadding(0, 0, 0, pad / 2)
+            })
+            layout.addView(android.widget.Button(this).apply {
+                text = "Google-Sprachausgabe installieren"
+                setOnClickListener { openUrl("market://details?id=${JarvisBridge.GOOGLE_TTS}") }
+            })
+        }
+
+        var selected: android.speech.tts.Voice? = voices.firstOrNull { it.name == prefs.getString("tts_voice", null) }
+            ?: voices.firstOrNull()
+        val group = android.widget.RadioGroup(this)
+        if (voices.isEmpty()) {
+            layout.addView(TextView(this).apply { text = "Keine deutsche Stimme gefunden. Installiere in den " +
+                "Android-Einstellungen unter „Sprachausgabe“ die deutschen Sprachdaten." })
+        }
+        voices.forEachIndexed { i, v ->
+            val quality = when {
+                v.quality >= android.speech.tts.Voice.QUALITY_VERY_HIGH -> "sehr gut"
+                v.quality >= android.speech.tts.Voice.QUALITY_HIGH -> "gut"
+                else -> "einfach"
+            }
+            group.addView(android.widget.RadioButton(this).apply {
+                id = 1000 + i
+                text = "Stimme ${('A' + i)} · $quality · ${if (v.isNetworkConnectionRequired) "online" else "offline"}"
+                isChecked = v == selected
+            })
+        }
+        layout.addView(group)
+
+        fun seek(label: String, value: Float): android.widget.SeekBar {
+            layout.addView(TextView(this).apply { text = label; setPadding(0, pad / 2, 0, 0) })
+            return android.widget.SeekBar(this).apply {
+                max = 100
+                progress = (((value - 0.5f) / 1.5f) * 100).toInt().coerceIn(0, 100)  // 0.5 … 2.0
+                layout.addView(this)
+            }
+        }
+        fun value(sb: android.widget.SeekBar) = 0.5f + sb.progress / 100f * 1.5f
+        val rate = seek("Tempo", prefs.getFloat("tts_rate", 1.0f))
+        val pitch = seek("Tonhöhe (links = tiefer)", prefs.getFloat("tts_pitch", 1.0f))
+
+        group.setOnCheckedChangeListener { _, checkedId ->
+            selected = voices.getOrNull(checkedId - 1000)
+            bridge.preview(selected, value(rate), value(pitch))
+        }
+        layout.addView(android.widget.Button(this).apply {
+            text = "▶ Probe hören"
+            setOnClickListener { bridge.preview(selected, value(rate), value(pitch)) }
+        })
+
+        AlertDialog.Builder(this)
+            .setTitle("Stimme von Jarvis")
+            .setView(scroll)
+            .setNeutralButton("System-Einstellungen") { _, _ ->
+                try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (e: Exception) { }
+            }
+            .setNegativeButton("Abbrechen") { _, _ -> bridge.applyVoicePrefs() }
+            .setPositiveButton("Übernehmen") { _, _ ->
+                prefs.edit()
+                    .putString("tts_voice", selected?.name)
+                    .putFloat("tts_rate", value(rate))
+                    .putFloat("tts_pitch", value(pitch))
+                    .apply()
+                bridge.applyVoicePrefs()
+            }
+            .show()
     }
 
     // ------------------------------------------------ Jarvis auf dem Handy
@@ -411,6 +593,52 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     } catch (e: ActivityNotFoundException) { }
 
+    // ---------------------------------------------------------- Hintergrund
+    /** Hintergrund-Verbindung: Benachrichtigungen, Akku-Ausnahme und Vollbild-Anrufe erlauben, Dienst starten. */
+    private fun enableBackground() {
+        if (Build.VERSION.SDK_INT >= 33 && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        }
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                @SuppressLint("BatteryLife")
+                val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+                startActivity(i)
+            } catch (e: Exception) { }
+        }
+        if (Build.VERSION.SDK_INT >= 34) {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            if (!nm.canUseFullScreenIntent()) {
+                Toast.makeText(this, "Bitte „Vollbild-Benachrichtigungen“ erlauben, damit Jarvis anrufen kann.", Toast.LENGTH_LONG).show()
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                        Uri.parse("package:$packageName")))
+                } catch (e: Exception) { }
+            }
+        }
+        JarvisService.start(this)
+    }
+
+    // --------------------------------------------------------------- Kalender
+    fun requestCalendarPermission() {
+        if (!hasPermission(Manifest.permission.READ_CALENDAR) || !hasPermission(Manifest.permission.WRITE_CALENDAR)) {
+            requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR), REQ_CALENDAR)
+        }
+    }
+
+    /** Kalender höchstens alle 5 Minuten an Jarvis schicken (beim Öffnen/Zurückkehren). */
+    private fun maybeSyncCalendar() {
+        if (!shareCalendar) return
+        if (System.currentTimeMillis() - prefs.getLong("calendar_synced", 0) < 5 * 60 * 1000L) return
+        bridge.syncCalendar()
+    }
+
+    fun markCalendarSynced() {
+        prefs.edit().putLong("calendar_synced", System.currentTimeMillis()).apply()
+    }
+
+
     // --------------------------------------------------------------- Kontakte
     private fun maybeSyncContacts() {
         if (!shareContacts) return
@@ -436,6 +664,8 @@ class MainActivity : Activity() {
             REQ_CONTACTS -> if (granted) bridge.syncContacts()
             else Toast.makeText(this, "Ohne Kontakt-Zugriff kann Jarvis deine Handy-Kontakte nicht nutzen.", Toast.LENGTH_LONG).show()
             REQ_TERMUX -> if (granted && localMode) loadApp()
+            REQ_CALENDAR -> if (granted) { prefs.edit().putLong("calendar_synced", 0).apply(); maybeSyncCalendar() }
+            else Toast.makeText(this, "Ohne Kalender-Zugriff kann Jarvis deinen Handy-Kalender nicht nutzen.", Toast.LENGTH_LONG).show()
             REQ_LOCATION -> if (!granted && !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION))
                 Toast.makeText(this, "Ohne Standort-Freigabe kann Jarvis deinen Ort nicht nutzen.", Toast.LENGTH_LONG).show()
             REQ_AUDIO -> if (!granted) Toast.makeText(this, "Ohne Mikrofon keine Sprachsteuerung.", Toast.LENGTH_LONG).show()

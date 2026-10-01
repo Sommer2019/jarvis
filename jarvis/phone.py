@@ -13,11 +13,14 @@ from __future__ import annotations
 import json
 import os
 import time
-import uuid
-from contextlib import contextmanager
 from pathlib import Path
 
+from .actions import ActionQueue
+
 ACTION_TTL = 10 * 60  # nicht ausgeführte Aktionen verfallen nach 10 Minuten
+# Nachrichten/Anrufe von Jarvis leben länger (Handy evtl. gerade offline)
+ACTION_TTL_BY_TYPE = {"notify": 12 * 3600, "ring": 30 * 60, "file": 24 * 3600,
+                      "calendar_add": 24 * 3600, "calendar_update": 24 * 3600, "calendar_delete": 24 * 3600}
 
 ACTION_TYPES = {
     "call": "Telefonnummer wählen (number)",
@@ -27,6 +30,12 @@ ACTION_TYPES = {
     "alarm": "Wecker stellen (hour, minute, label)",
     "timer": "Timer starten (seconds, label)",
     "open_url": "Link öffnen (url)",
+    "calendar_add": "Termin im Handy-Kalender anlegen",
+    "calendar_update": "Termin im Handy-Kalender ändern",
+    "calendar_delete": "Termin im Handy-Kalender löschen",
+    "notify": "Benachrichtigung von Jarvis aufs Handy (title, text)",
+    "ring": "Jarvis „ruft an“ – Anruf-Bildschirm mit Nachricht (text)",
+    "file": "Datei aufs Handy laden (file_id, name)",
 }
 
 
@@ -37,6 +46,7 @@ class PhoneStore:
         self.actions_file = self.dir / "phone_actions.json"
         self.app_file = self.dir / "phone_app.json"
         self.location_file = self.dir / "phone_location.json"
+        self.calendar_file = self.dir / "phone_calendar.json"
 
     # ---------------------------------------------------------------- app
     def register_app(self, info: dict) -> None:
@@ -110,32 +120,45 @@ class PhoneStore:
         return (f"{where} ({loc['lat']}, {loc['lon']}, ±{loc['accuracy_m']} m, {when}, "
                 f"Karte: https://maps.google.com/?q={loc['lat']},{loc['lon']})")
 
-    # ------------------------------------------------------------ actions
-    @contextmanager
-    def _actions(self):
+    # ----------------------------------------------------------- Kalender
+    def save_calendar(self, calendars: list[dict], events: list[dict]) -> int:
         self.dir.mkdir(parents=True, exist_ok=True)
-        items = json.loads(self.actions_file.read_text()) if self.actions_file.exists() else []
-        now = time.time()
-        items = [a for a in items if now - a["created"] < ACTION_TTL and not a.get("done")]
-        yield items
-        tmp = self.actions_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(items, ensure_ascii=False))
-        os.replace(tmp, self.actions_file)
+        tmp = self.calendar_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"updated": int(time.time()), "calendars": calendars, "events": events},
+                                  ensure_ascii=False))
+        os.replace(tmp, self.calendar_file)
+        return len(events)
+
+    def calendar(self) -> dict | None:
+        if not self.calendar_file.exists():
+            return None
+        return json.loads(self.calendar_file.read_text())
+
+    def resolve_calendar(self, name: str = "") -> dict:
+        """Kalender nach Name/Konto finden; ohne Name: primärer beschreibbarer Kalender."""
+        cal = self.calendar() or {}
+        writable = [c for c in cal.get("calendars", []) if c.get("writable")]
+        if not writable:
+            raise RuntimeError("Kein beschreibbarer Handy-Kalender bekannt (App öffnen, Kalender teilen aktivieren)")
+        if name:
+            n = name.lower()
+            for c in writable:
+                if n in (c.get("name", "") + " " + c.get("account", "")).lower():
+                    return c
+            raise ValueError(f"Kalender '{name}' nicht gefunden. Vorhanden: "
+                             + ", ".join(c.get("name", "?") for c in writable))
+        return next((c for c in writable if c.get("primary")), writable[0])
+
+    # ------------------------------------------------------------ actions
+    @property
+    def _queue(self) -> ActionQueue:
+        return ActionQueue(self.actions_file, ACTION_TYPES, ACTION_TTL, ACTION_TTL_BY_TYPE)
 
     def queue(self, action: str, params: dict) -> dict:
-        if action not in ACTION_TYPES:
-            raise ValueError(f"Unbekannte Aktion '{action}'. Erlaubt: {', '.join(ACTION_TYPES)}")
-        item = {"id": uuid.uuid4().hex[:12], "type": action, "params": params, "created": time.time()}
-        with self._actions() as items:
-            items.append(item)
-        return item
+        return self._queue.queue(action, params)
 
     def pending(self) -> list[dict]:
-        with self._actions() as items:
-            return list(items)
+        return self._queue.pending()
 
-    def done(self, action_id: str) -> bool:
-        with self._actions() as items:
-            before = len(items)
-            items[:] = [a for a in items if a["id"] != action_id]
-            return len(items) < before
+    def done(self, action_id: str, result=None, ok: bool = True) -> bool:
+        return self._queue.done(action_id, result, ok)

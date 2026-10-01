@@ -17,11 +17,10 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.webkit.JavascriptInterface
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
 
 /**
@@ -35,18 +34,67 @@ class JarvisBridge(private val activity: MainActivity) {
     private var ttsReady = false
 
     init {
-        tts = TextToSpeech(activity) { status ->
+        initTts()
+    }
+
+    companion object {
+        const val GOOGLE_TTS = "com.google.android.tts"
+        const val SAMPLE = "Hallo, ich bin Jarvis. Wie kann ich dir helfen?"
+    }
+
+    /** Engine: gespeicherte Wahl → Google-Sprachausgabe (klingt am natürlichsten) → Systemstandard. */
+    fun initTts(engine: String? = null) {
+        tts?.shutdown()
+        ttsReady = false
+        val wanted = engine ?: activity.prefs.getString("tts_engine", null)
+            ?: GOOGLE_TTS.takeIf { isInstalled(it) }
+        tts = TextToSpeech(activity, { status ->
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {
                 tts?.setLanguage(Locale.GERMANY)
+                applyVoicePrefs()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
-                    override fun onDone(id: String?) = js("onSpeakDone")
+                    override fun onDone(id: String?) { if (id?.startsWith("jarvis-") == true) js("onSpeakDone") }
                     @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) = js("onSpeakDone")
+                    override fun onError(id: String?) { if (id?.startsWith("jarvis-") == true) js("onSpeakDone") }
                 })
             }
-        }
+        }, wanted)
+    }
+
+    private fun isInstalled(pkg: String) = try {
+        activity.packageManager.getPackageInfo(pkg, 0); true
+    } catch (e: Exception) { false }
+
+    fun hasGoogleTts() = isInstalled(GOOGLE_TTS)
+
+    /** Deutsche Stimmen, beste zuerst (Qualität, dann offline vor online). */
+    fun germanVoices(): List<Voice> = try {
+        (tts?.voices ?: emptySet())
+            .filter { it.locale.language == "de" &&
+                !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }
+            .sortedWith(compareByDescending<Voice> { it.quality }
+                .thenBy { it.isNetworkConnectionRequired }
+                .thenBy { it.name })
+    } catch (e: Exception) { emptyList() }
+
+    fun applyVoicePrefs() {
+        val t = tts ?: return
+        val name = activity.prefs.getString("tts_voice", null)
+        val voices = germanVoices()
+        (voices.firstOrNull { it.name == name } ?: voices.firstOrNull())?.let { runCatching { t.voice = it } }
+        t.setSpeechRate(activity.prefs.getFloat("tts_rate", 1.0f))
+        t.setPitch(activity.prefs.getFloat("tts_pitch", 1.0f))
+    }
+
+    /** Probe mit einer bestimmten Stimme/Einstellung, ohne sie zu speichern. */
+    fun preview(voice: Voice?, rate: Float, pitch: Float) {
+        val t = tts ?: return
+        voice?.let { runCatching { t.voice = it } }
+        t.setSpeechRate(rate)
+        t.setPitch(pitch)
+        t.speak(SAMPLE, TextToSpeech.QUEUE_FLUSH, null, "preview")
     }
 
     fun shutdown() {
@@ -72,6 +120,10 @@ class JarvisBridge(private val activity: MainActivity) {
 
     @JavascriptInterface
     fun openSettings() = activity.runOnUiThread { activity.showSetup() }
+
+    /** Läuft die Hintergrund-Verbindung? Dann zeigt sie Nachrichten/Anrufe selbst an. */
+    @JavascriptInterface
+    fun backgroundActive(): Boolean = JarvisService.running
 
     @JavascriptInterface
     fun retry() = activity.runOnUiThread { activity.loadApp() }
@@ -152,6 +204,10 @@ class JarvisBridge(private val activity: MainActivity) {
     fun runAction(json: String): Boolean {
         val action = JSONObject(json)
         val p = action.optJSONObject("params") ?: JSONObject()
+        if (action.optString("type").startsWith("calendar_")) return runCalendarAction(action.optString("type"), p)
+        if (action.optString("type") == "file") {
+            return try { Api.downloadFile(activity, p.optString("file_id"), p.optString("name")); true } catch (e: Exception) { false }
+        }
         val number = p.optString("number").filter { it.isDigit() || it == '+' }
         val intent = when (action.optString("type")) {
             // DIAL öffnet nur die Telefon-App mit der Nummer – anrufen tippst du selbst
@@ -305,21 +361,36 @@ class JarvisBridge(private val activity: MainActivity) {
         return out
     }
 
-    private fun uploadContacts(contacts: JSONArray): Int {
-        val conn = URL("${activity.serverUrl}/api/phone/contacts").openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.connectTimeout = 15000
-            conn.readTimeout = 30000
-            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            conn.setRequestProperty("Authorization", "Bearer ${activity.token}")
-            conn.setRequestProperty("X-Jarvis-App", version())
-            conn.outputStream.use { it.write(JSONObject().put("contacts", contacts).toString().toByteArray()) }
-            if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP ${conn.responseCode}")
-            return JSONObject(conn.inputStream.bufferedReader().readText()).optInt("saved")
-        } finally {
-            conn.disconnect()
+    private fun uploadContacts(contacts: JSONArray): Int =
+        postJson("/api/phone/contacts", JSONObject().put("contacts", contacts)).optInt("saved")
+
+    private fun postJson(path: String, body: JSONObject): JSONObject = Api.post(activity, path, body)
+
+    // --------------------------------------------------------------- Kalender
+    fun calendarAllowed() = CalendarOps.allowed(activity)
+
+    /** Kalender + Termine (7 Tage zurück bis 90 Tage voraus) an Jarvis schicken. */
+    @JavascriptInterface
+    fun syncCalendar() {
+        if (!calendarAllowed()) return
+        Thread {
+            try {
+                val n = CalendarOps.sync(activity)
+                android.util.Log.i("Jarvis", "Kalender synchronisiert: $n Termine")
+            } catch (e: Exception) {
+                android.util.Log.w("Jarvis", "Kalender-Sync fehlgeschlagen", e)
+            }
+        }.start()
+    }
+
+    private fun runCalendarAction(type: String, p: JSONObject): Boolean {
+        if (!activity.hasPermission(Manifest.permission.WRITE_CALENDAR)) {
+            activity.runOnUiThread { activity.requestCalendarPermission() }
+            return false
         }
+        val ok = CalendarOps.run(activity, type, p)
+        // danach den neuen Stand an Jarvis schicken
+        if (ok) activity.webView.postDelayed({ syncCalendar() }, 1500)
+        return ok
     }
 }

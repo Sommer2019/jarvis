@@ -49,6 +49,10 @@ Telegram kosten ebenfalls nichts.
 | **Kontakte** (CardDAV + Handy) | „Wie ist die Nummer von Lena?“ · „Wer hat nächste Woche Geburtstag?“ · „Speicher Max' neue Mail max@firma.de“ |
 | **Standort** (in der App) | „Wo ist die nächste Apotheke?“ · „Wie wird das Wetter hier?“ · „Wie lange brauche ich von hier nach Hause?“ |
 | **GitHub** | „Was ist auf GitHub los?“ · „Ist der Build von jarvis grün?“ · „Welche Reviews warten auf mich?“ · „Leg ein Issue an: Login-Button ist kaputt“ |
+| **Laptop/PC** | „Mach Musik an“ · „Lauter“ · „Öffne Spotify“ · „Sperr meinen Laptop“ · „Öffne meinen Downloads-Ordner“ · „Wie voll ist der Akku vom Laptop?“ · „Kopier mir den Entwurf in die Zwischenablage“ |
+| **Dateien** | „Welche PDFs liegen in meinen Downloads?“ · „Schick mir die Rechnung von Vodafone aufs Handy“ · „Fass mir den Vertrag.docx zusammen“ · „Leg auf dem PC eine Einkaufsliste an“ · „Ändere in config.yml den Port auf 9000“ · Datei am Handy **teilen → Jarvis**: „Leg das auf dem Laptop in Dokumente ab“ |
+| **Erweitert sich selbst** | „Wenn auf eventim.de/… *Tickets verfügbar* steht, ruf mich an“ · „Jeden Montag um 8 fass mir die Woche zusammen“ · „Sag Bescheid, wenn der Preis unter 300 € fällt“ · „So legst du meine Rechnungen ab: …“ (wird zum Skill) |
+| **Jarvis meldet sich** | Nachrichten aufs Handy, bei Dringendem **ruft Jarvis an**: Das Handy klingelt, du nimmst ab, Jarvis sagt, was los ist, und hört auf deine Antwort |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
 | **Erinnerungen / To-dos** | „Erinnere mich morgen um 9 an die Steuer“ (legt einen Kalendertermin mit Alarm an und notiert es in `todo.md`) |
 | **Gedächtnis** | „Merk dir, dass meine Schwester Lena heißt“ (landet in `workspace/memory.md`) |
@@ -110,6 +114,13 @@ Nutzt du kein Google, setz `GOOGLE_ENABLED=false` und nimm CalDAV (Schritt 3b).
    auch am PC ausführen und danach `data/google_token.json` auf den Server kopieren.
 
 ### 3a. E-Mail bei anderen Anbietern (IMAP/SMTP)
+
+**Am einfachsten mit dem Assistenten:** `jarvis mail-setup` (auf dem Handy im Ubuntu-Shell,
+`~/jarvis-shell.sh`). Er kennt Gmail, GMX, Web.de, Outlook, iCloud, T-Online, Yahoo, Posteo und
+mailbox.org, erklärt das nötige App-Passwort, prüft die Anmeldung sofort und speichert alles. Für
+weitere Konten führst du ihn einfach nochmal aus.
+
+Von Hand geht es so:
 
 Trag in `.env` die Werte deines Anbieters ein. Nutze wenn möglich ein **App-Passwort**:
 
@@ -223,6 +234,146 @@ Gut zu wissen:
 
 ---
 
+## Jarvis erweitert sich selbst
+
+**Daueraufträge.** Sag Jarvis einfach, was er beobachten oder regelmäßig tun soll, er richtet es selbst ein:
+- „Wenn auf *Seite xy* irgendwann *Tickets verfügbar* steht, ruf mich an.“ → Webseiten-Wächter
+- „Sag mir Bescheid, wenn das Angebot auf *Seite* unter 300 € fällt.“ → Wächter mit Bedingung
+- „Jeden Werktag um 7:30: Wetter und erster Termin.“ / „Jeden Freitag 16 Uhr: offene Rechnungen?“
+- „Morgen um 15 Uhr: Prüf, ob Max geantwortet hat, sonst erinnere mich.“
+
+Webseiten-Wächter laden die Seite selbst und **verbrauchen kein Abo-Kontingent**. Claude wird nur
+gefragt, wenn sich die Seite geändert hat oder eine Bedingung zu prüfen ist. Bei einem reinen
+Suchbegriff meldet sich Jarvis ganz ohne Claude. „Wenn irgendwann …“-Aufträge beenden sich nach dem
+Auslösen. Zum Verwalten fragst du Jarvis: „Was überwachst du gerade?“, „Pausier den Ticket-Wächter“,
+„Lösch den Auftrag“. Gemeldet wird je nach Wunsch per **Anruf** (Handy klingelt), als Nachricht in
+der App oder über Telegram/Discord.
+
+**Skills.** Bringst du Jarvis einen Ablauf bei („So legst du meine Rechnungen ab: …“), speichert er
+ihn als Skill unter `workspace/.claude/skills/` und wendet ihn künftig von selbst an. Korrigierst du
+ihn, passt er den Skill an.
+
+---
+
+## Laptop/PC steuern
+
+Auf jedem Laptop, den Jarvis steuern soll, läuft ein kleiner **PC-Agent**. Er braucht nur Python 3
+und sonst nichts. Er holt sich Aufgaben von Jarvis und führt sie aus: Programme, Webseiten und
+Dateien öffnen, Musik (Play/Pause/Weiter), Lautstärke, Bildschirm sperren, Standby/Herunterfahren
+(nur nach Bestätigung), Benachrichtigung anzeigen, Text vorlesen, Zwischenablage und Status (Akku).
+
+**Läuft Jarvis auf diesem PC selbst?** Dann setz in `.env` den Wert `JARVIS_PC_LOCAL=true`, fertig.
+
+**Anderer Laptop (Windows, macOS, Linux):**
+1. Python 3 installieren (Windows: python.org, bei der Installation „Add to PATH“ anhaken).
+2. Die Datei `pc.py` herunterladen:
+   <https://raw.githubusercontent.com/Sommer2019/jarvis/master/jarvis/pc.py>
+3. Testen:
+   ```bash
+   python pc.py --server http://<jarvis-adresse>:8080 --token DEIN_TOKEN --name Arbeitslaptop
+   ```
+   Im Fenster erscheint „✅ verbunden“. Frag Jarvis jetzt z.B. „Wie ist der Status von meinem Laptop?“.
+4. Autostart einrichten: denselben Befehl mit `--install` anhängen. Unter Windows startet der Agent
+   dann bei jeder Anmeldung unsichtbar im Hintergrund, unter macOS per LaunchAgent und unter Linux
+   als systemd-Dienst.
+
+**Adresse:** Am einfachsten geht es mit **Tailscale** auf allen Geräten (siehe
+[„Ohne Portfreigabe“](#ohne-portfreigabe-handy--pc-über-tailscale)). Läuft Jarvis auf dem PC,
+nimmst du die Tailscale-Adresse des PCs. Läuft Jarvis **auf dem Handy**, setz dort in `.env`
+`JARVIS_HOST=0.0.0.0` (in Termux: `~/jarvis-shell.sh` → `nano .env`). Der Laptop nutzt dann
+`http://<Tailscale-IP-des-Handys>:8080`. Der Token schützt den Zugang.
+
+**Eigene Befehle** (z.B. ein Backup-Skript) legst du nur auf dem Laptop selbst fest, in der Datei
+`~/.jarvis-pc-commands.json`:
+```json
+{"backup": "C:\\Skripte\\backup.bat", "teams": "start msteams:", "vpn": "rasdial Firma"}
+```
+Jarvis kann nur diese Namen ausführen („Starte das Backup“), keine beliebigen Befehle.
+
+### Dateien: Laptop ↔ Jarvis ↔ Handy
+
+- **Auf dem Laptop suchen und lesen:** „Such auf dem Laptop nach Mietvertrag“, „Was liegt im
+  Downloads-Ordner?“, „Lies mir notizen.txt vor“. Textdateien liest Jarvis direkt. Andere Dateien
+  (PDF, Bilder …) holt er zu sich und kann sie dann ebenfalls ansehen.
+- **Zusammenfassen:** Jarvis liest auch Word (.docx), Excel (.xlsx), PowerPoint (.pptx) und
+  OpenDocument direkt: „Fass mir Angebot.docx in drei Punkten zusammen“.
+- **Bearbeiten und neu erstellen:** „Leg in Dokumente eine Packliste für den Urlaub an“, „Schreib
+  das Protokoll in meeting.md dazu“, „Ändere in config.yml den Port auf 9000“. Neue Dateien legt er
+  direkt an. Bei Änderungen an bestehenden Dateien sagt er vorher, was er ändert, und fragt nach.
+  Vor jeder Änderung landet eine **Sicherungskopie in `~/.jarvis-backup/`**. Bearbeiten geht für
+  Textformate (txt, md, csv, html, json, Code). Für Word schreibt er eine neue Text- oder
+  Markdown-Datei.
+- **Aufs Handy schicken:** „Schick mir die Präsentation von gestern aufs Handy.“ Jarvis holt die Datei
+  vom Laptop, und die App lädt sie nach **Downloads/Jarvis** (das geht auch im Hintergrund, mit
+  Benachrichtigung). Ohne App kommt sie per Telegram, falls das eingerichtet ist. Im Browser
+  erscheint ein Download-Knopf.
+- **Vom Handy zum Laptop:** Öffne die Datei in einer beliebigen App (Galerie, Dateien, WhatsApp …),
+  tippe auf **Teilen → Jarvis** und schreib oder sag dazu, was passieren soll, z.B. „Leg das auf
+  dem Laptop unter Dokumente/Rechnungen ab“. Auf dem Laptop landet sie standardmäßig in
+  `Downloads/Jarvis`.
+- **Grenzen:** Jarvis kommt nur an Ordner, die du auf dem Laptop freigibst. Standard ist dein
+  Benutzerordner. Einschränken geht in `~/.jarvis-pc-config.json`:
+  ```json
+  {"roots": ["~/Documents", "~/Downloads", "D:\\Fotos"], "max_mb": 100}
+  ```
+  Jarvis löscht oder überschreibt keine Dateien auf dem Laptop. Bei Jarvis selbst bleiben Dateien
+  14 Tage in `workspace/dateien/`.
+
+### Ohne Portfreigabe: Handy ↔ PC über Tailscale
+
+Läuft Jarvis auf deinem PC, muss die App auf dem Handy den PC erreichen, auch unterwegs im
+Mobilfunknetz. Dafür brauchst du **keine Portfreigabe** am Router. **Tailscale** baut ein privates
+Netz zwischen deinen Geräten auf. Es ist kostenlos (bis 100 Geräte) und funktioniert hinter jeder
+FritzBox, jedem CGNAT und jedem Mobilfunknetz. Von außen ist nichts erreichbar.
+
+1. **PC:** Tailscale von <https://tailscale.com/download> installieren und anmelden (z.B. mit Google).
+2. **Handy:** die App „Tailscale“ aus dem Play Store installieren und mit **demselben Konto**
+   anmelden. Den Schalter auf „Connected“ stellen. In den Android-Einstellungen bei Tailscale
+   „Durchgehend aktives VPN“ einschalten, damit es nach Neustarts weiterläuft.
+3. **PC, `.env`:**
+   ```env
+   JARVIS_HOST=0.0.0.0
+   JARVIS_PC_LOCAL=true        # Jarvis darf diesen PC steuern (Dateien, Musik …)
+   ```
+   Danach `jarvis serve` neu starten. Fragt Windows nach der Firewall, erlaubst du „Private
+   Netzwerke“. Tailscale zählt dazu.
+4. **Adresse herausfinden:** In der Tailscale-App steht beim PC eine IP wie `100.101.102.103`
+   oder ein Name wie `mein-pc` (MagicDNS).
+5. **Jarvis-App** → Einstellungen → Server-Adresse `http://100.101.102.103:8080` (oder
+   `http://mein-pc:8080`) und den Token aus `data/web_token.txt` eintragen.
+
+Das klappt jetzt zuhause, im WLAN anderer Leute und im Mobilfunknetz. Benachrichtigungen,
+Jarvis-Anrufe und Datei-Downloads laufen ebenfalls darüber.
+
+**Alternativen ohne Tailscale-App auf dem Handy:**
+- **Telegram oder Discord** (siehe unten): Jarvis baut die Verbindung selbst nach außen auf, also
+  ebenfalls ohne Portfreigabe. Du schickst Sprachnachrichten, Jarvis schickt Dateien direkt in den
+  Chat. Was fehlt: Anrufe von Jarvis und Handy-Aktionen wie Wecker.
+- **Cloudflare Tunnel** (wenn du eine eigene Domain hast): `cloudflared tunnel` leitet
+  `https://jarvis.deine-domain.de` auf `localhost:8080`. Den Token dann unbedingt geheim halten.
+
+---
+
+## Handy fernsteuern & Anrufe von Jarvis
+
+Setzt du in der App unter ⚙ das Häkchen **„Im Hintergrund verbunden bleiben“**, ist das Handy für Jarvis
+auch bei geschlossener App erreichbar. Das ist praktisch, wenn Jarvis auf dem PC läuft:
+- **Nachrichten von Jarvis** kommen als Benachrichtigung, zum Beispiel das Morgen-Briefing oder ein
+  Hinweis auf eine wichtige Mail.
+- **Jarvis ruft an:** Bei Dringendem oder wenn Jarvis eine Entscheidung von dir braucht, klingelt das
+  Handy mit einem Anruf-Bildschirm, auch auf dem Sperrbildschirm. Nimmst du ab, liest Jarvis die
+  Nachricht vor und hört auf deine Antwort. Lehnst du ab, bleibt die Nachricht als Benachrichtigung.
+- **Handy-Aktionen von unterwegs**, z.B. per Telegram oder vom PC aus („Ruf Mama an“, „Navigier mich
+  nach Hause“): Kalendertermine trägt Jarvis direkt ein. Anrufe, SMS, WhatsApp und Navigation erscheinen
+  als Benachrichtigung, die du antippst. Android erlaubt Apps nicht, so etwas ungefragt im Hintergrund
+  zu starten.
+
+Beim Einschalten fragt Android nach drei Erlaubnissen: **Benachrichtigungen**, **„Akku-Optimierung
+ignorieren“** (sonst trennt Android die Verbindung) und, ab Android 14, **„Vollbild-Benachrichtigungen“**
+für den Anruf-Bildschirm. Die Verbindung startet nach einem Neustart automatisch wieder.
+
+---
+
 ## Vom Handy aus nutzen
 
 ### Variante A: Jarvis-App für Android (APK, empfohlen)
@@ -258,6 +409,14 @@ Actions): `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_A
 Setzt du dort das Häkchen „Handy-Kontakte teilen“, lädt die App deine Kontakte etwa alle 12 Stunden
 auf **deinen eigenen** Jarvis-Server (`data/phone_contacts.json`). Sie gehen nirgendwo anders hin.
 Über ⚙ oben rechts kommst du jederzeit wieder in die Einstellungen.
+
+**Handy-Kalender:** Mit dem Häkchen „Handy-Kalender mit Jarvis teilen“ nutzt Jarvis die Kalender, die
+auf deinem Handy eingerichtet sind (Google, Outlook, Samsung …), ganz ohne eigenes Google-Setup. Die
+App schickt beim Öffnen die Termine der letzten 7 und der nächsten 90 Tage an deinen Jarvis-Server.
+Neue Termine trägt die App direkt in den Android-Kalender ein, von dort synchronisieren sie wie gewohnt.
+
+**Gmail über die Gmail-App?** Das geht leider nicht: Die Gmail-App lässt keine anderen Apps an die
+Mails. Für Gmail nimmst du stattdessen `jarvis mail-setup` → Gmail (App-Passwort, 2 Minuten).
 
 **Standort:** Setzt du in den App-Einstellungen das Häkchen „Standort mit Jarvis teilen“, schickt die
 App bei jeder Anfrage deinen aktuellen Ort mit. Die Adresse wird auf dem Handy selbst ermittelt, ohne
@@ -444,6 +603,12 @@ jarvis/
   whatsapp.py       WhatsApp Cloud API (Webhook, Sprachnachrichten)
   discord_bot.py    Discord-Bot (DM, @Erwähnung, Sprachnachrichten)
   mcp_github.py     MCP-Server: GitHub (Benachrichtigungen, PRs, Issues, CI)
+  pc.py             PC-Agent (nur Standardbibliothek, läuft eigenständig auf jedem Laptop)
+  mcp_pc.py         MCP-Server: Laptop/PC steuern
+  files.py          Dateiablage (Handy ↔ Jarvis ↔ PC)
+  actions.py        Aufgaben-Warteschlange für Geräte (Handy, PCs)
+  tasks.py          Daueraufträge & Webseiten-Wächter
+  mcp_tasks.py      MCP-Server: Jarvis legt Aufträge selbst an
   server.py         FastAPI: /api/chat, /api/voice, /api/tts + PWA
   telegram_bot.py   Telegram: Text & Sprachnachrichten
   scheduler.py      Morgen-Briefing, Posteingangs-Wächter

@@ -57,6 +57,16 @@ async def _serve() -> None:
     scheduler = Scheduler(config, brain, notifiers)
     scheduler.start()
 
+    if os.getenv("JARVIS_PC_LOCAL", "").lower() in ("1", "true", "yes", "ja"):
+        # Jarvis läuft auf diesem PC → ihn direkt mitsteuern
+        import threading
+
+        from .pc import Agent
+        from .server import resolve_token
+
+        agent = Agent(f"http://127.0.0.1:{config.port}", resolve_token(config), os.getenv("JARVIS_PC_NAME", ""))
+        threading.Thread(target=agent.run_forever, daemon=True, name="pc-agent").start()
+
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))
     try:
         await server.serve()
@@ -198,6 +208,110 @@ def _save_token(token: str) -> int:
     return 0
 
 
+MAIL_PRESETS = [
+    # Name, IMAP, SMTP, SMTP-Port, Hinweis
+    ("Gmail", "imap.gmail.com", "smtp.gmail.com", 465,
+     "Gmail braucht ein App-Passwort (nicht dein normales Passwort):\n"
+     "  1. https://myaccount.google.com/signinoptions/twosv → Bestätigung in zwei Schritten einschalten\n"
+     "  2. https://myaccount.google.com/apppasswords → Name „Jarvis“ → Erstellen\n"
+     "  3. Das 16-stellige Passwort hier einfügen."),
+    ("GMX", "imap.gmx.net", "mail.gmx.net", 587,
+     "Bei GMX vorher im Webmail unter Einstellungen → POP3/IMAP den IMAP-Zugriff erlauben."),
+    ("Web.de", "imap.web.de", "smtp.web.de", 587,
+     "Bei Web.de vorher im Webmail unter Einstellungen → POP3/IMAP den IMAP-Zugriff erlauben."),
+    ("Outlook / Hotmail / Live", "outlook.office365.com", "smtp.office365.com", 587,
+     "Bei Microsoft-Konten mit Zwei-Faktor-Anmeldung ein App-Kennwort unter account.microsoft.com → Sicherheit erstellen."),
+    ("iCloud", "imap.mail.me.com", "smtp.mail.me.com", 587,
+     "iCloud braucht ein app-spezifisches Passwort: appleid.apple.com → Anmeldung und Sicherheit."),
+    ("T-Online", "secureimap.t-online.de", "securesmtp.t-online.de", 465,
+     "T-Online braucht ein eigenes E-Mail-Passwort (Kundencenter → E-Mail-Einstellungen)."),
+    ("Yahoo", "imap.mail.yahoo.com", "smtp.mail.yahoo.com", 465,
+     "Yahoo braucht ein App-Passwort (Kontosicherheit → App-Passwort generieren)."),
+    ("Posteo", "posteo.de", "posteo.de", 465, ""),
+    ("mailbox.org", "imap.mailbox.org", "smtp.mailbox.org", 465, ""),
+]
+
+
+def _mail_setup() -> int:
+    """Assistent: Mailkonto einrichten, Login prüfen, speichern."""
+    import getpass
+    import json
+
+    from . import mcp_mail
+
+    print("E-Mail-Konto für Jarvis einrichten\n")
+    for i, (name, *_rest) in enumerate(MAIL_PRESETS, 1):
+        print(f"  {i}. {name}")
+    print(f"  {len(MAIL_PRESETS) + 1}. Anderer Anbieter")
+    try:
+        choice = int(input("\nNummer: ").strip())
+    except ValueError:
+        print("Abgebrochen.")
+        return 1
+    if 1 <= choice <= len(MAIL_PRESETS):
+        name, imap_host, smtp_host, smtp_port, hint = MAIL_PRESETS[choice - 1]
+        imap_port = 993
+        imap_ssl = True
+    else:
+        name = input("Anbieter-Name: ").strip() or "mail"
+        imap_host = input("IMAP-Server (z.B. imap.example.de): ").strip()
+        imap_port = int(input("IMAP-Port [993]: ").strip() or 993)
+        ssl_default = "j" if imap_port == 993 else "n"
+        imap_ssl = (input(f"Direkt verschlüsselt (SSL, Port 993)? Sonst STARTTLS. [{ssl_default}] ").strip().lower()
+                    or ssl_default) in ("j", "ja", "y")
+        smtp_host = input("SMTP-Server (z.B. smtp.example.de): ").strip()
+        smtp_port = int(input("SMTP-Port [465]: ").strip() or 465)
+        hint = ""
+    if hint:
+        print("\n" + hint)
+    address = input("\nE-Mail-Adresse: ").strip()
+    password = getpass.getpass("Passwort / App-Passwort (Eingabe unsichtbar): ").strip()
+    if name == "Gmail":
+        password = password.replace(" ", "")  # App-Passwörter werden mit Leerzeichen angezeigt
+    display = input("Absendername (optional, z.B. Robin Wagner): ").strip()
+
+    acc = mcp_mail.Account(name=name.split()[0].lower().replace(".", ""), imap_host=imap_host, imap_port=imap_port,
+                           imap_ssl=imap_ssl, username=address, password=password,
+                           smtp_host=smtp_host, smtp_port=smtp_port, smtp_username=address,
+                           smtp_password=password, from_address=address, from_name=display)
+    print("\nPrüfe Anmeldung …")
+    try:
+        with mcp_mail.imap(acc) as conn:
+            count = len(mcp_mail.folders(conn))
+        print(f"✅ Anmeldung erfolgreich ({count} Ordner gefunden).")
+    except Exception as e:  # noqa: BLE001
+        print(f"❌ Anmeldung fehlgeschlagen: {e}")
+        print("   Adresse/Passwort prüfen – bei Gmail, iCloud, Yahoo & Co. ein App-Passwort verwenden.")
+        return 1
+
+    existing = mcp_mail.accounts()
+    if not os.getenv("IMAP_HOST") or os.getenv("IMAP_USERNAME", "").lower() == address.lower():
+        for key, val in {"IMAP_HOST": imap_host, "IMAP_PORT": str(imap_port), "IMAP_SSL": str(acc.imap_ssl).lower(),
+                         "IMAP_USERNAME": address, "IMAP_PASSWORD": password, "SMTP_HOST": smtp_host,
+                         "SMTP_PORT": str(smtp_port), "MAIL_FROM": address, "MAIL_FROM_NAME": display,
+                         "MAIL_ACCOUNT_NAME": acc.name}.items():
+            set_env_value(key, val)
+        where = ".env"
+    else:  # weiteres Konto
+        path = config.data_dir / "mail_accounts.json"
+        items = json.loads(path.read_text()) if path.exists() else []
+        items = [a for a in items if a.get("username", "").lower() != address.lower()]
+        items.append({"name": acc.name if acc.name not in existing else f"{acc.name}{len(items) + 2}",
+                      "imap_host": imap_host, "imap_port": imap_port, "imap_ssl": acc.imap_ssl,
+                      "username": address, "password": password, "smtp_host": smtp_host,
+                      "smtp_port": smtp_port, "from_name": display})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(items, indent=2, ensure_ascii=False))
+        path.chmod(0o600)
+        where = str(path)
+    if os.getenv("JARVIS_ALLOW_SEND_EMAIL", "false").lower() not in ("1", "true", "yes", "ja"):
+        if input("Darf Jarvis Mails nach deiner Bestätigung selbst senden? (sonst nur Entwürfe) [j/N] ").strip().lower() in ("j", "ja", "y"):
+            set_env_value("JARVIS_ALLOW_SEND_EMAIL", "true")
+    print(f"\n✅ Gespeichert in {where}. Jarvis neu starten (Handy: ~/jarvis-stop.sh; ~/jarvis-start.sh).")
+    print("   Weiteres Konto? Einfach `jarvis mail-setup` nochmal ausführen.")
+    return 0
+
+
 def _doctor() -> int:
     ok = True
 
@@ -305,6 +419,12 @@ def main() -> None:
     sub.add_parser("briefing", help="Morgen-Briefing jetzt erstellen und ausgeben")
     sub.add_parser("doctor", help="Einrichtung prüfen")
     sub.add_parser("login", help="Mit deinem Claude-Abo verbinden (claude setup-token → .env)")
+    sub.add_parser("mail-setup", help="E-Mail-Konto einrichten (Gmail, GMX, Web.de, Outlook, …)")
+    pa = sub.add_parser("pc-agent", help="Diesen PC/Laptop für Jarvis steuerbar machen")
+    pa.add_argument("--server", default="", help="Jarvis-Adresse (Standard: dieser Rechner)")
+    pa.add_argument("--token", default="", help="Jarvis-Token (Standard: aus .env)")
+    pa.add_argument("--name", default="", help="Name dieses PCs")
+    pa.add_argument("--install", action="store_true", help="Autostart einrichten")
     sub.add_parser("token", help="Web-Token für die Handy-App anzeigen")
     args = parser.parse_args()
 
@@ -322,6 +442,19 @@ def main() -> None:
         run_auth_flow(config.google_credentials_file, config.google_token_file)
     elif args.cmd == "briefing":
         asyncio.run(_briefing())
+    elif args.cmd == "pc-agent":
+        from . import pc
+        from .server import resolve_token
+
+        argv = ["--server", args.server or f"http://127.0.0.1:{config.port}",
+                "--token", args.token or resolve_token(config)]
+        if args.name:
+            argv += ["--name", args.name]
+        if args.install:
+            argv.append("--install")
+        pc.main(argv)
+    elif args.cmd == "mail-setup":
+        sys.exit(_mail_setup())
     elif args.cmd == "login":
         sys.exit(_login())
     elif args.cmd == "doctor":
