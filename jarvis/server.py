@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import secrets
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from . import stt, tts
 from .brain import Brain
 from .config import Config
+from .pcstore import PcStore
 from .phone import PhoneStore
 
 log = logging.getLogger("jarvis.server")
@@ -65,6 +67,18 @@ class PhoneContactsIn(BaseModel):
     contacts: list[PhoneContact]
 
 
+class PcHello(BaseModel):
+    device: str
+    system: str = ""
+    commands: list[str] = []
+    version: str = ""
+
+
+class ActionDone(BaseModel):
+    ok: bool = True
+    result: object = None
+
+
 class PhoneCalendar(BaseModel):
     id: int
     name: str = ""
@@ -93,6 +107,16 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
     brain = brain or Brain(cfg)
     token = resolve_token(cfg)
     phone = PhoneStore(cfg.data_dir)
+    pcs = PcStore(cfg.data_dir)
+
+    async def long_poll(fetch, wait: int):
+        """Wartet bis zu `wait` Sekunden auf neue Aufgaben (spart Akku/Traffic gegenüber Dauerabfragen)."""
+        items = fetch()
+        end = asyncio.get_running_loop().time() + max(0, min(wait, 30))
+        while not items and asyncio.get_running_loop().time() < end:
+            await asyncio.sleep(1)
+            items = fetch()
+        return items
     app = FastAPI(title="Jarvis", docs_url=None, redoc_url=None)
 
     def from_app(request: Request) -> bool:
@@ -156,13 +180,27 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
         return phone.save_location(body.model_dump())
 
     @app.get("/api/phone/actions", dependencies=[Depends(auth)])
-    async def phone_actions(request: Request):
+    async def phone_actions(request: Request, wait: int = 0):
         from_app(request)
-        return {"actions": phone.pending()}
+        return {"actions": await long_poll(phone.pending, wait)}
 
     @app.post("/api/phone/actions/{action_id}/done", dependencies=[Depends(auth)])
     async def phone_action_done(action_id: str):
         return {"ok": phone.done(action_id)}
+
+    # --------------------------------------------------------------- PC
+    @app.post("/api/pc/hello", dependencies=[Depends(auth)])
+    async def pc_hello(body: PcHello):
+        return pcs.register(body.model_dump())
+
+    @app.get("/api/pc/actions", dependencies=[Depends(auth)])
+    async def pc_actions(device: str, wait: int = 0):
+        pcs.touch(device)
+        return {"actions": await long_poll(lambda: pcs.queue.pending(device), wait)}
+
+    @app.post("/api/pc/actions/{action_id}/done", dependencies=[Depends(auth)])
+    async def pc_action_done(action_id: str, body: ActionDone):
+        return {"ok": pcs.queue.done(action_id, body.result, body.ok)}
 
     # ---------------------------------------------------------- WhatsApp
     @app.get("/webhook/whatsapp")

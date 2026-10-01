@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.view.ViewGroup
@@ -34,6 +35,10 @@ class MainActivity : Activity() {
     companion object {
         const val ACTION_TALK = "de.jarvis.app.TALK"
         const val ACTION_SETTINGS = "de.jarvis.app.SETTINGS"
+        const val ACTION_ANSWER = "de.jarvis.app.ANSWER"
+        const val ACTION_MESSAGE = "de.jarvis.app.MESSAGE"
+        const val REQ_NOTIFY = 6
+        @Volatile var visible = false
         const val LOAD_TIMEOUT_MS = 20_000L
         const val REQ_AUDIO = 1
         const val REQ_CONTACTS = 2
@@ -53,6 +58,8 @@ class MainActivity : Activity() {
     private var pendingTalk = false
     private var startAttempts = 0
     private var pageLoaded = false
+    /** Angenommener Jarvis-Anruf / angetippte Nachricht, die an die Oberfläche geht, sobald sie bereit ist. */
+    private var pendingJs: String? = null
     private var mainFrameError = false
     private val watchdog = Runnable {
         if (!pageLoaded) {
@@ -103,6 +110,9 @@ class MainActivity : Activity() {
             }
         }
 
+        JarvisService.channels(this)
+        JarvisService.start(this)
+        takeCallIntent(intent)
         pendingTalk = isTalkIntent(intent)
         if (serverUrl.isEmpty()) showSetup() else {
             loadApp()
@@ -114,6 +124,37 @@ class MainActivity : Activity() {
     }
 
     private fun isSettingsIntent(i: Intent?): Boolean = i?.action == ACTION_SETTINGS
+
+    /** Anruf angenommen / Nachricht angetippt → Text an die Weboberfläche übergeben. */
+    private fun takeCallIntent(i: Intent?): Boolean {
+        val text = i?.getStringExtra("text") ?: return false
+        val fn = when (i.action) {
+            ACTION_ANSWER -> "incomingCall"
+            ACTION_MESSAGE -> "showMessage"
+            else -> return false
+        }
+        getSystemService(android.app.NotificationManager::class.java).cancel(IncomingCallActivity.NOTIFICATION_ID)
+        pendingJs = "window.JarvisNative && window.JarvisNative.$fn && window.JarvisNative.$fn(${org.json.JSONObject.quote(text)})"
+        return true
+    }
+
+    private fun deliverPendingJs() {
+        val js = pendingJs ?: return
+        if (!pageLoaded) return  // kommt nach dem Laden (checkUiReady)
+        pendingJs = null
+        webView.evaluateJavascript(js, null)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        visible = true
+        if (serverUrl.isNotEmpty()) maybeSyncCalendar()
+    }
+
+    override fun onPause() {
+        visible = false
+        super.onPause()
+    }
 
     private fun isTalkIntent(i: Intent?): Boolean =
         i?.action in setOf(ACTION_TALK, Intent.ACTION_ASSIST, Intent.ACTION_VOICE_COMMAND)
@@ -203,6 +244,10 @@ class MainActivity : Activity() {
             showSetup()
             return
         }
+        if (takeCallIntent(intent)) {
+            deliverPendingJs()
+            return
+        }
         if (isTalkIntent(intent)) {
             webView.evaluateJavascript("window.JarvisNative && window.JarvisNative.listen && window.JarvisNative.listen()", null)
         }
@@ -268,6 +313,11 @@ class MainActivity : Activity() {
             isChecked = shareCalendar
         }
         layout.addView(calendarBox)
+        val backgroundBox = CheckBox(this).apply {
+            text = "Im Hintergrund verbunden bleiben (Nachrichten & Anrufe von Jarvis, auch wenn die App zu ist)"
+            isChecked = JarvisService.enabled(this@MainActivity)
+        }
+        layout.addView(backgroundBox)
         layout.addView(android.widget.Button(this).apply {
             text = "🔊 Stimme & Tempo einstellen"
             setOnClickListener { showVoiceSettings() }
@@ -302,6 +352,7 @@ class MainActivity : Activity() {
                     .putBoolean("share_contacts", contactsBox.isChecked)
                     .putBoolean("share_location", locationBox.isChecked)
                     .putBoolean("share_calendar", calendarBox.isChecked)
+                    .putBoolean("background", backgroundBox.isChecked)
                     .putLong("calendar_synced", 0)
                     .putLong("contacts_synced", 0)
                     .apply()
@@ -310,6 +361,7 @@ class MainActivity : Activity() {
                         Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
                 }
                 if (calendarBox.isChecked) requestCalendarPermission()
+                if (backgroundBox.isChecked) enableBackground() else JarvisService.stop(this)
                 if (url.isEmpty()) showSetup("Bitte eine Server-Adresse eingeben.") else loadApp()
             }
             .show()
@@ -328,6 +380,7 @@ class MainActivity : Activity() {
             } catch (e: Exception) { null }
             if (info?.optBoolean("ready") == true) {
                 pageLoaded = true
+                deliverPendingJs()
                 return@evaluateJavascript
             }
             val details = buildString {
@@ -505,6 +558,33 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     } catch (e: ActivityNotFoundException) { }
 
+    // ---------------------------------------------------------- Hintergrund
+    /** Hintergrund-Verbindung: Benachrichtigungen, Akku-Ausnahme und Vollbild-Anrufe erlauben, Dienst starten. */
+    private fun enableBackground() {
+        if (Build.VERSION.SDK_INT >= 33 && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+        }
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            try {
+                @SuppressLint("BatteryLife")
+                val i = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+                startActivity(i)
+            } catch (e: Exception) { }
+        }
+        if (Build.VERSION.SDK_INT >= 34) {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            if (!nm.canUseFullScreenIntent()) {
+                Toast.makeText(this, "Bitte „Vollbild-Benachrichtigungen“ erlauben, damit Jarvis anrufen kann.", Toast.LENGTH_LONG).show()
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                        Uri.parse("package:$packageName")))
+                } catch (e: Exception) { }
+            }
+        }
+        JarvisService.start(this)
+    }
+
     // --------------------------------------------------------------- Kalender
     fun requestCalendarPermission() {
         if (!hasPermission(Manifest.permission.READ_CALENDAR) || !hasPermission(Manifest.permission.WRITE_CALENDAR)) {
@@ -523,10 +603,6 @@ class MainActivity : Activity() {
         prefs.edit().putLong("calendar_synced", System.currentTimeMillis()).apply()
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (serverUrl.isNotEmpty()) maybeSyncCalendar()
-    }
 
     // --------------------------------------------------------------- Kontakte
     private fun maybeSyncContacts() {

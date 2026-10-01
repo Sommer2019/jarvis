@@ -76,9 +76,16 @@
     });
   }
 
+  let lastCall = null;      // Text eines angenommenen Jarvis-Anrufs
+  let listenAfterSpeak = false;
+
   async function send(text, voice) {
     if (!text.trim() || busy) return;
     add(text, "me");
+    if (lastCall) {           // Jarvis weiß so, worauf sich die Antwort bezieht
+      text = `(Antwort auf deinen Anruf: „${lastCall}“) ${text}`;
+      lastCall = null;
+    }
     busy = true; setState("busy");
     const pending = add("…", "bot", "pending");
     try {
@@ -145,9 +152,31 @@
     await api(`/api/phone/actions/${a.id}/done`, { method: "POST" }).catch(() => {});
   }
 
+  // Nachricht bzw. angenommener „Anruf“ von Jarvis
+  function showJarvisMessage(text) {
+    add("📣 " + text, "bot");
+  }
+  function incomingCall(text) {
+    add("📞 " + text, "bot");
+    lastCall = text;
+    listenAfterSpeak = true;   // nach dem Vorlesen auf deine Antwort hören
+    if (!muted) speak(text); else listen();
+  }
+  window.JarvisNative = window.JarvisNative || {};
+  window.JarvisNative.incomingCall = incomingCall;
+  window.JarvisNative.showMessage = showJarvisMessage;
+
   function handleActions(actions) {
     for (const a of actions || []) {
       if (done.has(a.id)) continue;
+      if (a.type === "notify" || a.type === "ring") {
+        // Mit Hintergrund-Verbindung zeigt die App das selbst als Benachrichtigung/Anruf
+        if (native && native.backgroundActive && native.backgroundActive()) continue;
+        ack(a);
+        const text = (a.params && a.params.text) || "";
+        a.type === "ring" ? incomingCall(text) : showJarvisMessage(text);
+        continue;
+      }
       if (native) {
         const label = ACTION_LABELS[a.type]?.(a.params) || a.type;
         if (native.runAction(JSON.stringify(a))) add("✔ " + label, "bot", "action");
@@ -208,7 +237,10 @@
   async function speak(raw) {
     const text = speakable(raw);
     setState("speaking");
-    const done = () => { setState("idle"); if (handsfree) setTimeout(listen, 300); };
+    const done = () => {
+      setState("idle");
+      if (handsfree || listenAfterSpeak) { listenAfterSpeak = false; setTimeout(listen, 300); }
+    };
     if (native) {
       window.JarvisNative.onSpeakDone = done;
       native.speak(text);

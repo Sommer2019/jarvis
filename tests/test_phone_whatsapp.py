@@ -80,3 +80,29 @@ def test_location_store(tmp_path):
     loc = s.location()
     assert loc["lat"] == 52.520008 and loc["accuracy_m"] == 8 and loc["age_minutes"] == 0
     assert "Berlin" in PhoneStore.describe(loc) and "maps.google.com" in PhoneStore.describe(loc)
+
+
+def test_notify_and_ring_live_longer(tmp_path, monkeypatch):
+    s = PhoneStore(tmp_path)
+    s.queue("call", {"number": "1"})
+    s.queue("notify", {"title": "Jarvis", "text": "Paket ist da"})
+    s.queue("ring", {"text": "Dringend!"})
+    real = time.time
+    monkeypatch.setattr(time, "time", lambda: real() + 20 * 60)   # nach 20 Min.
+    assert sorted(a["type"] for a in s.pending()) == ["notify", "ring"]
+    monkeypatch.setattr(time, "time", lambda: real() + 2 * 3600)  # nach 2 Std.
+    assert [a["type"] for a in s.pending()] == ["notify"]
+
+
+async def test_scheduler_pushes_to_phone(tmp_path):
+    from jarvis.config import Config
+    from jarvis.scheduler import Scheduler
+
+    s = PhoneStore(tmp_path)
+    sched = Scheduler(Config(data_dir=tmp_path, ntfy_url=""), brain=None, notifiers=[])
+    await sched.notify("☀️ Guten Morgen!\n\nHeute 3 Termine")
+    assert s.pending() == []          # App noch nie verbunden → kein Push
+    s.register_app({"version": "1"})
+    await sched.notify("☀️ Guten Morgen!\n\nHeute 3 Termine")
+    (a,) = s.pending()
+    assert a["type"] == "notify" and a["params"]["title"] == "☀️ Guten Morgen!" and a["params"]["text"] == "Heute 3 Termine"

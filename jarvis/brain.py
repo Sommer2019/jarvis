@@ -22,6 +22,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import Config
+from .pcstore import PcStore
 from .phone import PhoneStore
 
 log = logging.getLogger("jarvis.brain")
@@ -148,6 +149,8 @@ class Brain:
             # Zugangsdaten erbt der Unterprozess aus der Umgebung (CALDAV_*/CARDDAV_*),
             # damit Passwörter nicht in data/mcp.json landen.
             servers["dav"] = server("jarvis.mcp_dav")
+        if PcStore(self.cfg.data_dir).any_registered():
+            servers["pc"] = server("jarvis.mcp_pc")
         if self.phone_enabled():
             servers["phone"] = server("jarvis.mcp_phone")
         self.mcp_servers = list(servers)

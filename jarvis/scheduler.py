@@ -33,7 +33,8 @@ INBOX_PROMPT = f"""Prüfe alle meine Mailkonten auf neue ungelesene Mails seit {
 Melde dich NUR bei wirklich Wichtigem (persönliche Mails von echten Menschen, Fristen, Rechnungen, Termine, Sicherheitswarnungen).
 Newsletter, Werbung und Benachrichtigungen ignorierst du.
 Wenn es nichts Wichtiges gibt, antworte exakt mit: {NOTHING}
-Sonst: kurze Zusammenfassung pro Mail + Vorschlag, was ich tun sollte. Nichts senden, nichts löschen."""
+Sonst: kurze Zusammenfassung pro Mail + Vorschlag, was ich tun sollte. Nichts senden, nichts löschen.
+Ist etwas wirklich dringend (Frist heute, Notfall, wichtige Person wartet), ruf mich zusätzlich mit phone_ring an."""
 
 
 def parse_hhmm(value: str) -> tuple[int, int] | None:
@@ -70,6 +71,17 @@ class Scheduler:
         self.notifiers = list(notifiers)
         if cfg.ntfy_url:
             self.notifiers.append(lambda t: ntfy_notifier(cfg.ntfy_url, t))
+        # Jarvis-App als Push-Kanal, sobald sie einmal verbunden war
+        from .phone import PhoneStore
+
+        phone = PhoneStore(cfg.data_dir)
+
+        async def phone_notifier(text: str) -> None:
+            if phone.app_registered():
+                title, _, body = text.partition("\n")
+                phone.queue("notify", {"title": title.strip()[:80] or "Jarvis", "text": (body or text).strip()[:3000]})
+
+        self.notifiers.append(phone_notifier)
         self.tz = ZoneInfo(cfg.timezone)
         self._tasks: list[asyncio.Task] = []
         self._last_inbox = datetime.now(self.tz)

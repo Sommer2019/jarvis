@@ -49,6 +49,8 @@ Telegram kosten ebenfalls nichts.
 | **Kontakte** (CardDAV + Handy) | „Wie ist die Nummer von Lena?“ · „Wer hat nächste Woche Geburtstag?“ · „Speicher Max' neue Mail max@firma.de“ |
 | **Standort** (in der App) | „Wo ist die nächste Apotheke?“ · „Wie wird das Wetter hier?“ · „Wie lange brauche ich von hier nach Hause?“ |
 | **GitHub** | „Was ist auf GitHub los?“ · „Ist der Build von jarvis grün?“ · „Welche Reviews warten auf mich?“ · „Leg ein Issue an: Login-Button ist kaputt“ |
+| **Laptop/PC** | „Mach Musik an“ · „Lauter“ · „Öffne Spotify“ · „Sperr meinen Laptop“ · „Öffne meinen Downloads-Ordner“ · „Wie voll ist der Akku vom Laptop?“ · „Kopier mir den Entwurf in die Zwischenablage“ |
+| **Jarvis meldet sich** | Nachrichten aufs Handy, bei Dringendem **ruft Jarvis an**: Das Handy klingelt, du nimmst ab, Jarvis sagt, was los ist, und hört auf deine Antwort |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
 | **Erinnerungen / To-dos** | „Erinnere mich morgen um 9 an die Steuer“ (legt einen Kalendertermin mit Alarm an und notiert es in `todo.md`) |
 | **Gedächtnis** | „Merk dir, dass meine Schwester Lena heißt“ (landet in `workspace/memory.md`) |
@@ -227,6 +229,62 @@ Gut zu wissen:
   Tailscale Funnel und ist dort eher unpraktisch; dafür ist ein Rechner zu Hause besser.
 - Der Akkuverbrauch ist gering, solange du Jarvis nicht benutzt. Häufige Routinen wie der
   Mail-Check alle 15 Minuten kosten aber spürbar Akku.
+
+---
+
+## Laptop/PC steuern
+
+Auf jedem Laptop, den Jarvis steuern soll, läuft ein kleiner **PC-Agent**. Er braucht nur Python 3
+und sonst nichts. Er holt sich Aufgaben von Jarvis und führt sie aus: Programme, Webseiten und
+Dateien öffnen, Musik (Play/Pause/Weiter), Lautstärke, Bildschirm sperren, Standby/Herunterfahren
+(nur nach Bestätigung), Benachrichtigung anzeigen, Text vorlesen, Zwischenablage und Status (Akku).
+
+**Läuft Jarvis auf diesem PC selbst?** Dann setz in `.env` den Wert `JARVIS_PC_LOCAL=true`, fertig.
+
+**Anderer Laptop (Windows, macOS, Linux):**
+1. Python 3 installieren (Windows: python.org, bei der Installation „Add to PATH“ anhaken).
+2. Die Datei `pc.py` herunterladen:
+   <https://raw.githubusercontent.com/Sommer2019/jarvis/master/jarvis/pc.py>
+3. Testen:
+   ```bash
+   python pc.py --server http://<jarvis-adresse>:8080 --token DEIN_TOKEN --name Arbeitslaptop
+   ```
+   Im Fenster erscheint „✅ verbunden“. Frag Jarvis jetzt z.B. „Wie ist der Status von meinem Laptop?“.
+4. Autostart einrichten: denselben Befehl mit `--install` anhängen. Unter Windows startet der Agent
+   dann bei jeder Anmeldung unsichtbar im Hintergrund, unter macOS per LaunchAgent und unter Linux
+   als systemd-Dienst.
+
+**Adresse:** Am einfachsten geht es mit **Tailscale** auf allen Geräten. Läuft Jarvis auf dem PC,
+nimmst du die Tailscale-Adresse des PCs. Läuft Jarvis **auf dem Handy**, setz dort in `.env`
+`JARVIS_HOST=0.0.0.0` (in Termux: `~/jarvis-shell.sh` → `nano .env`). Der Laptop nutzt dann
+`http://<Tailscale-IP-des-Handys>:8080`. Der Token schützt den Zugang.
+
+**Eigene Befehle** (z.B. ein Backup-Skript) legst du nur auf dem Laptop selbst fest, in der Datei
+`~/.jarvis-pc-commands.json`:
+```json
+{"backup": "C:\\Skripte\\backup.bat", "teams": "start msteams:", "vpn": "rasdial Firma"}
+```
+Jarvis kann nur diese Namen ausführen („Starte das Backup“), keine beliebigen Befehle.
+
+---
+
+## Handy fernsteuern & Anrufe von Jarvis
+
+Setzt du in der App unter ⚙ das Häkchen **„Im Hintergrund verbunden bleiben“**, ist das Handy für Jarvis
+auch bei geschlossener App erreichbar. Das ist praktisch, wenn Jarvis auf dem PC läuft:
+- **Nachrichten von Jarvis** kommen als Benachrichtigung, zum Beispiel das Morgen-Briefing oder ein
+  Hinweis auf eine wichtige Mail.
+- **Jarvis ruft an:** Bei Dringendem oder wenn Jarvis eine Entscheidung von dir braucht, klingelt das
+  Handy mit einem Anruf-Bildschirm, auch auf dem Sperrbildschirm. Nimmst du ab, liest Jarvis die
+  Nachricht vor und hört auf deine Antwort. Lehnst du ab, bleibt die Nachricht als Benachrichtigung.
+- **Handy-Aktionen von unterwegs**, z.B. per Telegram oder vom PC aus („Ruf Mama an“, „Navigier mich
+  nach Hause“): Kalendertermine trägt Jarvis direkt ein. Anrufe, SMS, WhatsApp und Navigation erscheinen
+  als Benachrichtigung, die du antippst. Android erlaubt Apps nicht, so etwas ungefragt im Hintergrund
+  zu starten.
+
+Beim Einschalten fragt Android nach drei Erlaubnissen: **Benachrichtigungen**, **„Akku-Optimierung
+ignorieren“** (sonst trennt Android die Verbindung) und, ab Android 14, **„Vollbild-Benachrichtigungen“**
+für den Anruf-Bildschirm. Die Verbindung startet nach einem Neustart automatisch wieder.
 
 ---
 
@@ -459,6 +517,9 @@ jarvis/
   whatsapp.py       WhatsApp Cloud API (Webhook, Sprachnachrichten)
   discord_bot.py    Discord-Bot (DM, @Erwähnung, Sprachnachrichten)
   mcp_github.py     MCP-Server: GitHub (Benachrichtigungen, PRs, Issues, CI)
+  pc.py             PC-Agent (nur Standardbibliothek, läuft eigenständig auf jedem Laptop)
+  mcp_pc.py         MCP-Server: Laptop/PC steuern
+  actions.py        Aufgaben-Warteschlange für Geräte (Handy, PCs)
   server.py         FastAPI: /api/chat, /api/voice, /api/tts + PWA
   telegram_bot.py   Telegram: Text & Sprachnachrichten
   scheduler.py      Morgen-Briefing, Posteingangs-Wächter

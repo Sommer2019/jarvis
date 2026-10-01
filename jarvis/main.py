@@ -57,6 +57,16 @@ async def _serve() -> None:
     scheduler = Scheduler(config, brain, notifiers)
     scheduler.start()
 
+    if os.getenv("JARVIS_PC_LOCAL", "").lower() in ("1", "true", "yes", "ja"):
+        # Jarvis läuft auf diesem PC → ihn direkt mitsteuern
+        import threading
+
+        from .pc import Agent
+        from .server import resolve_token
+
+        agent = Agent(f"http://127.0.0.1:{config.port}", resolve_token(config), os.getenv("JARVIS_PC_NAME", ""))
+        threading.Thread(target=agent.run_forever, daemon=True, name="pc-agent").start()
+
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))
     try:
         await server.serve()
@@ -410,6 +420,11 @@ def main() -> None:
     sub.add_parser("doctor", help="Einrichtung prüfen")
     sub.add_parser("login", help="Mit deinem Claude-Abo verbinden (claude setup-token → .env)")
     sub.add_parser("mail-setup", help="E-Mail-Konto einrichten (Gmail, GMX, Web.de, Outlook, …)")
+    pa = sub.add_parser("pc-agent", help="Diesen PC/Laptop für Jarvis steuerbar machen")
+    pa.add_argument("--server", default="", help="Jarvis-Adresse (Standard: dieser Rechner)")
+    pa.add_argument("--token", default="", help="Jarvis-Token (Standard: aus .env)")
+    pa.add_argument("--name", default="", help="Name dieses PCs")
+    pa.add_argument("--install", action="store_true", help="Autostart einrichten")
     sub.add_parser("token", help="Web-Token für die Handy-App anzeigen")
     args = parser.parse_args()
 
@@ -427,6 +442,17 @@ def main() -> None:
         run_auth_flow(config.google_credentials_file, config.google_token_file)
     elif args.cmd == "briefing":
         asyncio.run(_briefing())
+    elif args.cmd == "pc-agent":
+        from . import pc
+        from .server import resolve_token
+
+        argv = ["--server", args.server or f"http://127.0.0.1:{config.port}",
+                "--token", args.token or resolve_token(config)]
+        if args.name:
+            argv += ["--name", args.name]
+        if args.install:
+            argv.append("--install")
+        pc.main(argv)
     elif args.cmd == "mail-setup":
         sys.exit(_mail_setup())
     elif args.cmd == "login":

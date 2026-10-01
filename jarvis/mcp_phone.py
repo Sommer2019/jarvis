@@ -149,6 +149,23 @@ def phone_calendar_delete(event_id: int) -> dict:
 
 
 @mcp.tool()
+def phone_notify(text: str, title: str = "Jarvis") -> dict:
+    """Schickt eine Benachrichtigung aufs Handy (auch wenn die App geschlossen ist,
+    sofern dort „Im Hintergrund verbunden bleiben“ an ist). Für Infos ohne Eile."""
+    return {"queued": store.queue("notify", {"title": title, "text": text}),
+            "note": "Erscheint als Benachrichtigung auf dem Handy."}
+
+
+@mcp.tool()
+def phone_ring(text: str) -> dict:
+    """Jarvis „ruft an“: Das Handy klingelt mit Anruf-Bildschirm. Nimmt der Nutzer an, wird
+    `text` vorgelesen und Jarvis hört zu. NUR für Dringendes oder wenn du eine Entscheidung
+    brauchst (z.B. wichtige Mail, Termin gleich, Rückfrage) – nicht für Routine-Infos."""
+    return {"queued": store.queue("ring", {"text": text}),
+            "note": "Das Handy klingelt (verfällt nach 30 Min., falls offline)."}
+
+
+@mcp.tool()
 def phone_call(number: str) -> dict:
     """Öffnet die Telefon-App mit dieser Nummer."""
     return {"queued": store.queue("call", {"number": number}), "note": _NOTE}
