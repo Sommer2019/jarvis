@@ -149,6 +149,8 @@ class Brain:
             # Zugangsdaten erbt der Unterprozess aus der Umgebung (CALDAV_*/CARDDAV_*),
             # damit Passwörter nicht in data/mcp.json landen.
             servers["dav"] = server("jarvis.mcp_dav")
+        # Daueraufträge: Jarvis kann sich selbst Aufgaben/Wächter einrichten
+        servers["tasks"] = server("jarvis.mcp_tasks")
         if PcStore(self.cfg.data_dir).any_registered():
             servers["pc"] = server("jarvis.mcp_pc")
         if self.phone_enabled():
@@ -174,7 +176,8 @@ class Brain:
 
     # Eingebaute Claude-Code-Tools: Gedächtnis/Notizen im Workspace + Recherche.
     # Bash ist bewusst NICHT dabei.
-    BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"]
+    # Skill: eigene, vom Nutzer beigebrachte Abläufe (workspace/.claude/skills/*/SKILL.md)
+    BUILTIN_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Skill"]
 
     def builtin_tools(self) -> list[str]:
         extra = [t.split("(")[0] for t in self.cfg.extra_tools if not t.startswith("mcp__")]

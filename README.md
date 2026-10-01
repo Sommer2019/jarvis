@@ -50,6 +50,7 @@ Telegram kosten ebenfalls nichts.
 | **Standort** (in der App) | „Wo ist die nächste Apotheke?“ · „Wie wird das Wetter hier?“ · „Wie lange brauche ich von hier nach Hause?“ |
 | **GitHub** | „Was ist auf GitHub los?“ · „Ist der Build von jarvis grün?“ · „Welche Reviews warten auf mich?“ · „Leg ein Issue an: Login-Button ist kaputt“ |
 | **Laptop/PC** | „Mach Musik an“ · „Lauter“ · „Öffne Spotify“ · „Sperr meinen Laptop“ · „Öffne meinen Downloads-Ordner“ · „Wie voll ist der Akku vom Laptop?“ · „Kopier mir den Entwurf in die Zwischenablage“ |
+| **Erweitert sich selbst** | „Wenn auf eventim.de/… *Tickets verfügbar* steht, ruf mich an“ · „Jeden Montag um 8 fass mir die Woche zusammen“ · „Sag Bescheid, wenn der Preis unter 300 € fällt“ · „So legst du meine Rechnungen ab: …“ (wird zum Skill) |
 | **Jarvis meldet sich** | Nachrichten aufs Handy, bei Dringendem **ruft Jarvis an**: Das Handy klingelt, du nimmst ab, Jarvis sagt, was los ist, und hört auf deine Antwort |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
 | **Erinnerungen / To-dos** | „Erinnere mich morgen um 9 an die Steuer“ (legt einen Kalendertermin mit Alarm an und notiert es in `todo.md`) |
@@ -229,6 +230,27 @@ Gut zu wissen:
   Tailscale Funnel und ist dort eher unpraktisch; dafür ist ein Rechner zu Hause besser.
 - Der Akkuverbrauch ist gering, solange du Jarvis nicht benutzt. Häufige Routinen wie der
   Mail-Check alle 15 Minuten kosten aber spürbar Akku.
+
+---
+
+## Jarvis erweitert sich selbst
+
+**Daueraufträge.** Sag Jarvis einfach, was er beobachten oder regelmäßig tun soll, er richtet es selbst ein:
+- „Wenn auf *Seite xy* irgendwann *Tickets verfügbar* steht, ruf mich an.“ → Webseiten-Wächter
+- „Sag mir Bescheid, wenn das Angebot auf *Seite* unter 300 € fällt.“ → Wächter mit Bedingung
+- „Jeden Werktag um 7:30: Wetter und erster Termin.“ / „Jeden Freitag 16 Uhr: offene Rechnungen?“
+- „Morgen um 15 Uhr: Prüf, ob Max geantwortet hat, sonst erinnere mich.“
+
+Webseiten-Wächter laden die Seite selbst und **verbrauchen kein Abo-Kontingent**. Claude wird nur
+gefragt, wenn sich die Seite geändert hat oder eine Bedingung zu prüfen ist. Bei einem reinen
+Suchbegriff meldet sich Jarvis ganz ohne Claude. „Wenn irgendwann …“-Aufträge beenden sich nach dem
+Auslösen. Zum Verwalten fragst du Jarvis: „Was überwachst du gerade?“, „Pausier den Ticket-Wächter“,
+„Lösch den Auftrag“. Gemeldet wird je nach Wunsch per **Anruf** (Handy klingelt), als Nachricht in
+der App oder über Telegram/Discord.
+
+**Skills.** Bringst du Jarvis einen Ablauf bei („So legst du meine Rechnungen ab: …“), speichert er
+ihn als Skill unter `workspace/.claude/skills/` und wendet ihn künftig von selbst an. Korrigierst du
+ihn, passt er den Skill an.
 
 ---
 
@@ -520,6 +542,8 @@ jarvis/
   pc.py             PC-Agent (nur Standardbibliothek, läuft eigenständig auf jedem Laptop)
   mcp_pc.py         MCP-Server: Laptop/PC steuern
   actions.py        Aufgaben-Warteschlange für Geräte (Handy, PCs)
+  tasks.py          Daueraufträge & Webseiten-Wächter
+  mcp_tasks.py      MCP-Server: Jarvis legt Aufträge selbst an
   server.py         FastAPI: /api/chat, /api/voice, /api/tts + PWA
   telegram_bot.py   Telegram: Text & Sprachnachrichten
   scheduler.py      Morgen-Briefing, Posteingangs-Wächter

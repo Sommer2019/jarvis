@@ -11,3 +11,4 @@ workspace/memory.md
 workspace/todo.md
 workspace/notizen/
 *.egg-info/
+workspace/.claude/
