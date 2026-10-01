@@ -200,10 +200,11 @@ class JarvisBridge(private val activity: MainActivity) {
     }
 
     /** Hat der Jarvis-Server eine natürliche Stimme (Piper)? Meldet die Web-Oberfläche nach dem Start. */
-    @Volatile var serverVoiceAvailable = false
+    @Volatile private var serverVoiceReady = false
+    val serverVoiceAvailable: Boolean get() = serverVoiceReady
 
     @JavascriptInterface
-    fun setServerVoiceAvailable(available: Boolean) { serverVoiceAvailable = available }
+    fun reportServerVoice(available: Boolean) { serverVoiceReady = available }
 
     /** Server-Stimme nutzen? Standard: ja, sobald sie eingerichtet ist (jarvis voice-setup). */
     @JavascriptInterface

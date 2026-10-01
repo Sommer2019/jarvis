@@ -471,7 +471,7 @@
     try {
       const h = await (await fetch("/api/health")).json();
       serverTTS = !!h.tts;
-      if (native && native.setServerVoiceAvailable) native.setServerVoiceAvailable(serverTTS);
+      if (native && native.reportServerVoice) native.reportServerVoice(serverTTS);
       setState("idle");
     } catch { setState("err"); }
     if (!log.children.length) add("Hallo! Tippe auf das Mikrofon oder schreib mir eine Aufgabe.", "bot");
