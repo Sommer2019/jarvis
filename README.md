@@ -50,7 +50,7 @@ Telegram kosten ebenfalls nichts.
 | **Standort** (in der App) | „Wo ist die nächste Apotheke?“ · „Wie wird das Wetter hier?“ · „Wie lange brauche ich von hier nach Hause?“ |
 | **GitHub** | „Was ist auf GitHub los?“ · „Ist der Build von jarvis grün?“ · „Welche Reviews warten auf mich?“ · „Leg ein Issue an: Login-Button ist kaputt“ |
 | **Laptop/PC** | „Mach Musik an“ · „Lauter“ · „Öffne Spotify“ · „Sperr meinen Laptop“ · „Öffne meinen Downloads-Ordner“ · „Wie voll ist der Akku vom Laptop?“ · „Kopier mir den Entwurf in die Zwischenablage“ |
-| **Dateien** | „Welche PDFs liegen in meinen Downloads?“ · „Schick mir die Rechnung von Vodafone aufs Handy“ · „Was steht in notizen.txt auf dem Laptop?“ · Datei am Handy **teilen → Jarvis**: „Leg das auf dem Laptop in Dokumente ab“ |
+| **Dateien** | „Welche PDFs liegen in meinen Downloads?“ · „Schick mir die Rechnung von Vodafone aufs Handy“ · „Fass mir den Vertrag.docx zusammen“ · „Leg auf dem PC eine Einkaufsliste an“ · „Ändere in config.yml den Port auf 9000“ · Datei am Handy **teilen → Jarvis**: „Leg das auf dem Laptop in Dokumente ab“ |
 | **Erweitert sich selbst** | „Wenn auf eventim.de/… *Tickets verfügbar* steht, ruf mich an“ · „Jeden Montag um 8 fass mir die Woche zusammen“ · „Sag Bescheid, wenn der Preis unter 300 € fällt“ · „So legst du meine Rechnungen ab: …“ (wird zum Skill) |
 | **Jarvis meldet sich** | Nachrichten aufs Handy, bei Dringendem **ruft Jarvis an**: Das Handy klingelt, du nimmst ab, Jarvis sagt, was los ist, und hört auf deine Antwort |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
@@ -277,7 +277,8 @@ Dateien öffnen, Musik (Play/Pause/Weiter), Lautstärke, Bildschirm sperren, Sta
    dann bei jeder Anmeldung unsichtbar im Hintergrund, unter macOS per LaunchAgent und unter Linux
    als systemd-Dienst.
 
-**Adresse:** Am einfachsten geht es mit **Tailscale** auf allen Geräten. Läuft Jarvis auf dem PC,
+**Adresse:** Am einfachsten geht es mit **Tailscale** auf allen Geräten (siehe
+[„Ohne Portfreigabe“](#ohne-portfreigabe-handy--pc-über-tailscale)). Läuft Jarvis auf dem PC,
 nimmst du die Tailscale-Adresse des PCs. Läuft Jarvis **auf dem Handy**, setz dort in `.env`
 `JARVIS_HOST=0.0.0.0` (in Termux: `~/jarvis-shell.sh` → `nano .env`). Der Laptop nutzt dann
 `http://<Tailscale-IP-des-Handys>:8080`. Der Token schützt den Zugang.
@@ -294,6 +295,14 @@ Jarvis kann nur diese Namen ausführen („Starte das Backup“), keine beliebig
 - **Auf dem Laptop suchen und lesen:** „Such auf dem Laptop nach Mietvertrag“, „Was liegt im
   Downloads-Ordner?“, „Lies mir notizen.txt vor“. Textdateien liest Jarvis direkt. Andere Dateien
   (PDF, Bilder …) holt er zu sich und kann sie dann ebenfalls ansehen.
+- **Zusammenfassen:** Jarvis liest auch Word (.docx), Excel (.xlsx), PowerPoint (.pptx) und
+  OpenDocument direkt: „Fass mir Angebot.docx in drei Punkten zusammen“.
+- **Bearbeiten und neu erstellen:** „Leg in Dokumente eine Packliste für den Urlaub an“, „Schreib
+  das Protokoll in meeting.md dazu“, „Ändere in config.yml den Port auf 9000“. Neue Dateien legt er
+  direkt an. Bei Änderungen an bestehenden Dateien sagt er vorher, was er ändert, und fragt nach.
+  Vor jeder Änderung landet eine **Sicherungskopie in `~/.jarvis-backup/`**. Bearbeiten geht für
+  Textformate (txt, md, csv, html, json, Code). Für Word schreibt er eine neue Text- oder
+  Markdown-Datei.
 - **Aufs Handy schicken:** „Schick mir die Präsentation von gestern aufs Handy.“ Jarvis holt die Datei
   vom Laptop, und die App lädt sie nach **Downloads/Jarvis** (das geht auch im Hintergrund, mit
   Benachrichtigung). Ohne App kommt sie per Telegram, falls das eingerichtet ist. Im Browser
@@ -309,6 +318,39 @@ Jarvis kann nur diese Namen ausführen („Starte das Backup“), keine beliebig
   ```
   Jarvis löscht oder überschreibt keine Dateien auf dem Laptop. Bei Jarvis selbst bleiben Dateien
   14 Tage in `workspace/dateien/`.
+
+### Ohne Portfreigabe: Handy ↔ PC über Tailscale
+
+Läuft Jarvis auf deinem PC, muss die App auf dem Handy den PC erreichen, auch unterwegs im
+Mobilfunknetz. Dafür brauchst du **keine Portfreigabe** am Router. **Tailscale** baut ein privates
+Netz zwischen deinen Geräten auf. Es ist kostenlos (bis 100 Geräte) und funktioniert hinter jeder
+FritzBox, jedem CGNAT und jedem Mobilfunknetz. Von außen ist nichts erreichbar.
+
+1. **PC:** Tailscale von <https://tailscale.com/download> installieren und anmelden (z.B. mit Google).
+2. **Handy:** die App „Tailscale“ aus dem Play Store installieren und mit **demselben Konto**
+   anmelden. Den Schalter auf „Connected“ stellen. In den Android-Einstellungen bei Tailscale
+   „Durchgehend aktives VPN“ einschalten, damit es nach Neustarts weiterläuft.
+3. **PC, `.env`:**
+   ```env
+   JARVIS_HOST=0.0.0.0
+   JARVIS_PC_LOCAL=true        # Jarvis darf diesen PC steuern (Dateien, Musik …)
+   ```
+   Danach `jarvis serve` neu starten. Fragt Windows nach der Firewall, erlaubst du „Private
+   Netzwerke“. Tailscale zählt dazu.
+4. **Adresse herausfinden:** In der Tailscale-App steht beim PC eine IP wie `100.101.102.103`
+   oder ein Name wie `mein-pc` (MagicDNS).
+5. **Jarvis-App** → Einstellungen → Server-Adresse `http://100.101.102.103:8080` (oder
+   `http://mein-pc:8080`) und den Token aus `data/web_token.txt` eintragen.
+
+Das klappt jetzt zuhause, im WLAN anderer Leute und im Mobilfunknetz. Benachrichtigungen,
+Jarvis-Anrufe und Datei-Downloads laufen ebenfalls darüber.
+
+**Alternativen ohne Tailscale-App auf dem Handy:**
+- **Telegram oder Discord** (siehe unten): Jarvis baut die Verbindung selbst nach außen auf, also
+  ebenfalls ohne Portfreigabe. Du schickst Sprachnachrichten, Jarvis schickt Dateien direkt in den
+  Chat. Was fehlt: Anrufe von Jarvis und Handy-Aktionen wie Wecker.
+- **Cloudflare Tunnel** (wenn du eine eigene Domain hast): `cloudflared tunnel` leitet
+  `https://jarvis.deine-domain.de` auf `localhost:8080`. Den Token dann unbedingt geheim halten.
 
 ---
 

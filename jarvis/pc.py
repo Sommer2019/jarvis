@@ -37,6 +37,7 @@ COMMANDS_FILE = Path.home() / ".jarvis-pc-commands.json"
 # Dateizugriff: welche Ordner Jarvis sehen darf (Standard: dein Benutzerordner), max. Größe
 CONFIG_FILE = Path.home() / ".jarvis-pc-config.json"
 SAVE_DIR = Path.home() / "Downloads" / "Jarvis"
+BACKUP_DIR = Path.home() / ".jarvis-backup"
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".cache", "AppData", "Library", ".Trash", "$RECYCLE.BIN",
              ".venv", "venv", ".gradle", ".npm", ".m2", "site-packages"}
 _AGENT = None  # laufender Agent (für Datei-Upload/-Download)
@@ -59,7 +60,9 @@ PC_ACTION_TYPES = {
     "run": "Freigegebenen Befehl ausführen (name)",
     "files_list": "Ordnerinhalt auflisten (path, pattern)",
     "files_search": "Dateien suchen (query, path, ext)",
-    "file_read": "Textdatei lesen (path)",
+    "file_read": "Datei lesen: Text, Word, Excel, PowerPoint, OpenDocument (path)",
+    "file_write": "Textdatei anlegen/überschreiben/ergänzen (path, content, mode: create|overwrite|append)",
+    "file_edit": "Text in einer Datei ersetzen (path, old, new, all)",
     "file_upload": "Datei an Jarvis schicken (path)",
     "file_download": "Datei von Jarvis speichern (file_id, name, folder)",
 }
@@ -415,18 +418,119 @@ def act_files_search(p):
     return {"count": len(hits), "results": hits[:50], "complete": time.time() <= end}
 
 
+OFFICE_TEXT = {".docx": "word/document.xml", ".pptx": "ppt/slides/", ".xlsx": "xl/sharedStrings.xml",
+               ".odt": "content.xml", ".ods": "content.xml", ".odp": "content.xml"}
+BINARY_EXT = {".pdf", ".doc", ".xls", ".ppt", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic",
+              ".mp3", ".mp4", ".mov", ".exe", ".dmg", ".iso", ".7z", ".rar"}
+TEXT_LIMIT = 2_000_000  # Bearbeiten nur für Dateien bis 2 MB
+
+
+def office_text(path: Path) -> str:
+    """Text aus Word/Excel/PowerPoint/OpenDocument (nur Standardbibliothek)."""
+    import re
+    import zipfile
+
+    part = OFFICE_TEXT[path.suffix.lower()]
+    with zipfile.ZipFile(path) as z:
+        names = sorted((n for n in z.namelist() if n.startswith(part) and n.endswith(".xml")),
+                       key=lambda n: int(re.sub(r"\D", "", n) or 0)) if part.endswith("/") else [part]
+        chunks = []
+        for i, n in enumerate(names):
+            if n not in z.namelist():
+                continue
+            xml = z.read(n).decode("utf-8", errors="replace")
+            xml = re.sub(r"</(w:p|a:p|text:p|text:h|si|table:table-row)>", "\n", xml)
+            xml = re.sub(r"<(w:tab|text:tab)[^>]*/>", "\t", xml)
+            text = re.sub(r"<[^>]+>", "", xml)
+            if part.endswith("/"):
+                text = f"--- Folie {i + 1} ---\n" + text
+            chunks.append(text)
+    from html import unescape
+
+    return unescape("\n".join(chunks)).strip()
+
+
 def act_file_read(p):
     path = safe_path(p["path"])
     if path.is_dir():
         raise IsADirectoryError(f"'{path}' ist ein Ordner")
-    binary_ext = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".zip", ".png", ".jpg",
-                  ".jpeg", ".gif", ".webp", ".heic", ".mp3", ".mp4", ".mov", ".exe", ".dmg", ".iso"}
-    data = path.read_bytes()[:400_000]
-    if path.suffix.lower() in binary_ext or b"\x00" in data[:4000]:
-        raise ValueError("Keine Textdatei – für PDFs/Bilder/Office-Dateien file_upload verwenden")
-    text = data.decode("utf-8", errors="replace")
+    if path.suffix.lower() in OFFICE_TEXT:
+        text = office_text(path)
+    else:
+        data = path.read_bytes()[:400_000]
+        if path.suffix.lower() in BINARY_EXT or b"\x00" in data[:4000]:
+            raise ValueError("Keine Textdatei – für PDFs/Bilder file_upload verwenden")
+        text = data.decode("utf-8", errors="replace")
     limit = int(p.get("max_chars") or 20_000)
-    return {"path": str(path), "content": text[:limit], "truncated": len(text) > limit}
+    return {"path": str(path), "content": text[:limit], "truncated": len(text) > limit, "chars": len(text)}
+
+
+def _check_text_target(path: Path) -> None:
+    if path.suffix.lower() in OFFICE_TEXT or path.suffix.lower() in BINARY_EXT:
+        raise ValueError(f"{path.suffix}-Dateien kann ich nicht direkt bearbeiten – nur Textformate "
+                         "(txt, md, csv, html, json, Code …)")
+    if path.exists() and path.stat().st_size > TEXT_LIMIT:
+        raise ValueError("Datei zu groß zum Bearbeiten (max. 2 MB)")
+
+
+def backup(path: Path) -> str:
+    """Vor jeder Änderung eine Kopie nach ~/.jarvis-backup/<Datum>/ – nichts geht verloren."""
+    import shutil
+
+    folder = BACKUP_DIR / time.strftime("%Y-%m-%d")
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{time.strftime('%H%M%S')}_{path.name}"
+    shutil.copy2(path, target)
+    return str(target)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(f".{path.name}.jarvis-tmp")
+    tmp.write_text(text, encoding="utf-8", newline="")
+    os.replace(tmp, path)
+
+
+def act_file_write(p):
+    path = safe_path(p["path"], must_exist=False)
+    mode = p.get("mode") or "create"
+    if mode not in ("create", "overwrite", "append"):
+        raise ValueError("mode muss create, overwrite oder append sein")
+    content = str(p.get("content") or "")
+    if len(content) > TEXT_LIMIT:
+        raise ValueError("Inhalt zu groß (max. 2 MB)")
+    if path.is_dir():
+        raise IsADirectoryError(f"'{path}' ist ein Ordner")
+    _check_text_target(path)
+    out = {"path": str(path)}
+    if path.exists():
+        if mode == "create":
+            raise FileExistsError(f"'{path}' gibt es schon – mode='append' oder (nach Rückfrage) 'overwrite'")
+        out["backup"] = backup(path)
+        if mode == "append":
+            old = path.read_text(encoding="utf-8", errors="replace")
+            content = old + ("" if not old or old.endswith("\n") else "\n") + content
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomic(path, content)
+    out["size_kb"] = round(path.stat().st_size / 1024, 1)
+    return out
+
+
+def act_file_edit(p):
+    path = safe_path(p["path"])
+    _check_text_target(path)
+    old, new = str(p.get("old") or ""), str(p.get("new") or "")
+    if not old:
+        raise ValueError("old (zu ersetzender Text) fehlt")
+    text = path.read_text(encoding="utf-8", errors="strict")
+    n = text.count(old)
+    if n == 0:
+        raise ValueError("Der zu ersetzende Text kommt in der Datei nicht vor – erst mit file_read genau nachsehen")
+    if n > 1 and not p.get("all"):
+        raise ValueError(f"Text kommt {n}× vor – mehr Kontext angeben oder all=true")
+    bak = backup(path)
+    _write_atomic(path, text.replace(old, new) if p.get("all") else text.replace(old, new, 1))
+    return {"path": str(path), "replaced": n if p.get("all") else 1, "backup": bak}
 
 
 def act_file_upload(p):

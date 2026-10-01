@@ -137,9 +137,25 @@ def pc_files_search(query: str = "", ext: str = "", path: str = "", device: str 
 
 
 @mcp.tool()
-def pc_file_read(path: str, device: str = "") -> dict:
-    """Liest eine Textdatei vom PC (txt, md, csv, Code …). Für PDFs/Bilder/Office: pc_fetch_file."""
-    return _do("file_read", {"path": path}, device)
+def pc_file_read(path: str, max_chars: int = 20000, device: str = "") -> dict:
+    """Liest eine Datei vom PC: Text (txt, md, csv, Code …) sowie den Text aus Word (docx), Excel (xlsx),
+    PowerPoint (pptx) und OpenDocument. Für PDFs/Bilder: pc_fetch_file."""
+    return _do("file_read", {"path": path, "max_chars": max_chars}, device)
+
+
+@mcp.tool()
+def pc_file_write(path: str, content: str, mode: str = "create", device: str = "") -> dict:
+    """Legt eine Textdatei auf dem PC an (mode='create', Ordner werden angelegt), hängt Text an
+    (mode='append') oder ersetzt den ganzen Inhalt (mode='overwrite' – nur nach Bestätigung).
+    Textformate: txt, md, csv, html, json, Code … Vor jeder Änderung legt der PC eine Sicherung an."""
+    return _do("file_write", {"path": path, "content": content, "mode": mode}, device)
+
+
+@mcp.tool()
+def pc_file_edit(path: str, old: str, new: str, all: bool = False, device: str = "") -> dict:
+    """Ersetzt in einer Textdatei auf dem PC genau den Text `old` durch `new` (vorher mit pc_file_read
+    nachsehen; `old` muss eindeutig sein, sonst all=true). Sicherung wird automatisch angelegt."""
+    return _do("file_edit", {"path": path, "old": old, "new": new, "all": all}, device)
 
 
 @mcp.tool()

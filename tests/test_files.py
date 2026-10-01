@@ -91,3 +91,45 @@ def test_upload_endpoint_limits(live):
         "Authorization": "Bearer geheim", "Content-Type": f"multipart/form-data; boundary={boundary}"})
     meta = json.loads(urllib.request.urlopen(req).read())
     assert meta["name"] == "böse.txt" and (data / meta["workspace_path"]).read_text() == "hallo"
+
+
+def test_write_edit_with_backup(laptop, monkeypatch):
+    laptop = laptop[2]
+    monkeypatch.setattr(pc, "BACKUP_DIR", laptop / ".jarvis-backup")
+    ok, res = pc.run_action({"type": "file_write", "params": {"path": str(laptop / "Notizen" / "neu.md"), "content": "# Liste\n- Milch"}})
+    assert ok, res
+    target = laptop / "Notizen" / "neu.md"
+    assert target.read_text() == "# Liste\n- Milch"
+    ok, res = pc.run_action({"type": "file_write", "params": {"path": str(target), "content": "x"}})
+    assert not ok and "gibt es schon" in res  # create überschreibt nie
+    ok, res = pc.run_action({"type": "file_write", "params": {"path": str(target), "content": "- Brot", "mode": "append"}})
+    assert ok and target.read_text() == "# Liste\n- Milch\n- Brot"
+    ok, res = pc.run_action({"type": "file_edit", "params": {"path": str(target), "old": "Milch", "new": "Hafermilch"}})
+    assert ok and "Hafermilch" in target.read_text()
+    assert (laptop / ".jarvis-backup").exists() and "Milch\n- Brot" in open(res["backup"]).read()
+    ok, res = pc.run_action({"type": "file_edit", "params": {"path": str(target), "old": "Käse", "new": "x"}})
+    assert not ok and "kommt in der Datei nicht vor" in res
+    ok, res = pc.run_action({"type": "file_write", "params": {"path": "/etc/jarvis.txt", "content": "x"}})
+    assert not ok and "außerhalb" in res
+    ok, res = pc.run_action({"type": "file_write", "params": {"path": str(laptop / "a.docx"), "content": "x"}})
+    assert not ok and "nicht direkt bearbeiten" in res
+
+
+def test_read_office(laptop):
+    import zipfile
+
+    laptop = laptop[2]
+    docx = laptop / "Brief.docx"
+    with zipfile.ZipFile(docx, "w") as z:
+        z.writestr("word/document.xml", '<w:document><w:body><w:p><w:r><w:t>Sehr geehrte Frau M&amp;ller,</w:t>'
+                   '</w:r></w:p><w:p><w:r><w:t>Kündigung zum 31.12.</w:t></w:r></w:p></w:body></w:document>')
+    ok, res = pc.run_action({"type": "file_read", "params": {"path": str(docx)}})
+    assert ok, res
+    assert res["content"] == "Sehr geehrte Frau M&ller,\nKündigung zum 31.12."
+    pptx = laptop / "Talk.pptx"
+    with zipfile.ZipFile(pptx, "w") as z:
+        for i in (2, 1, 10):
+            z.writestr(f"ppt/slides/slide{i}.xml", f"<p:sld><a:p><a:t>Folie {i}</a:t></a:p></p:sld>")
+        z.writestr("ppt/slides/_rels/slide1.xml.rels", "<x/>")
+    ok, res = pc.run_action({"type": "file_read", "params": {"path": str(pptx)}})
+    assert ok and res["content"].index("Folie 1") < res["content"].index("Folie 2") < res["content"].index("Folie 10")
