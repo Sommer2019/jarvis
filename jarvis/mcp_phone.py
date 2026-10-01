@@ -165,6 +165,57 @@ def phone_ring(text: str) -> dict:
             "note": "Das Handy klingelt (verfällt nach 30 Min., falls offline)."}
 
 
+# ----------------------------------------------------------------- Dateien
+def _files():
+    from .files import FileStore
+
+    ws = Path(os.getenv("JARVIS_WORKSPACE", Path(__file__).resolve().parent.parent / "workspace"))
+    return FileStore(ws, store.dir)
+
+
+@mcp.tool()
+def jarvis_files() -> list[dict]:
+    """Dateien bei Jarvis: vom Handy geteilt, vom PC geholt (pc_fetch_file) usw. – neueste zuerst.
+    `workspace_path` kannst du mit dem Read-Tool lesen (auch PDFs/Bilder)."""
+    return _files().list()[:30]
+
+
+def _telegram_send(path: Path, caption: str) -> int:
+    import httpx
+
+    token, users = os.getenv("TELEGRAM_BOT_TOKEN", ""), [u for u in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",") if u.strip()]
+    if not token or not users:
+        return 0
+    sent = 0
+    for uid in users:
+        with open(path, "rb") as f:
+            r = httpx.post(f"https://api.telegram.org/bot{token}/sendDocument", timeout=120,
+                           data={"chat_id": uid.strip(), "caption": caption[:1000]}, files={"document": (path.name, f)})
+        sent += r.status_code == 200
+    return sent
+
+
+@mcp.tool()
+def phone_send_file(file_id: str, via: str = "auto", caption: str = "") -> dict:
+    """Schickt eine Jarvis-Datei aufs Handy. via: 'app' (landet in Downloads/Jarvis auf dem Handy),
+    'telegram' (als Dokument im Telegram-Chat) oder 'auto' (App, wenn verbunden, sonst Telegram).
+    Dateien vom PC vorher mit pc_fetch_file holen."""
+    files = _files()
+    meta = files.get(file_id)
+    if not meta:
+        raise ValueError(f"Datei {file_id} nicht gefunden (jarvis_files zeigt alle)")
+    out: dict = {"file": meta["name"]}
+    if via in ("app", "auto") and store.app_registered():
+        out["app"] = store.queue("file", {"file_id": file_id, "name": meta["name"], "size_kb": meta["size_kb"]})["id"]
+        out["note"] = "Die App lädt die Datei nach Downloads/Jarvis (sofort, wenn verbunden)."
+    if via == "telegram" or (via == "auto" and "app" not in out):
+        n = _telegram_send(files.path(meta), caption or meta["name"])
+        out["telegram"] = f"an {n} Chat(s) gesendet" if n else "Telegram nicht eingerichtet"
+    if "app" not in out and not out.get("telegram", "").startswith("an "):
+        raise RuntimeError("Kein Weg aufs Handy: Jarvis-App nie verbunden und Telegram nicht eingerichtet")
+    return out
+
+
 @mcp.tool()
 def phone_call(number: str) -> dict:
     """Öffnet die Telefon-App mit dieser Nummer."""

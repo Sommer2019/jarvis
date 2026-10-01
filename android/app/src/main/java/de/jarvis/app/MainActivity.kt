@@ -113,6 +113,7 @@ class MainActivity : Activity() {
         JarvisService.channels(this)
         JarvisService.start(this)
         takeCallIntent(intent)
+        takeShareIntent(intent)
         pendingTalk = isTalkIntent(intent)
         if (serverUrl.isEmpty()) showSetup() else {
             loadApp()
@@ -135,6 +136,39 @@ class MainActivity : Activity() {
         }
         getSystemService(android.app.NotificationManager::class.java).cancel(IncomingCallActivity.NOTIFICATION_ID)
         pendingJs = "window.JarvisNative && window.JarvisNative.$fn && window.JarvisNative.$fn(${org.json.JSONObject.quote(text)})"
+        return true
+    }
+
+    /** „Teilen → Jarvis“: Dateien hochladen bzw. geteilten Text ins Eingabefeld übernehmen. */
+    private fun takeShareIntent(i: Intent?): Boolean {
+        if (i?.action != Intent.ACTION_SEND && i?.action != Intent.ACTION_SEND_MULTIPLE) return false
+        @Suppress("DEPRECATION")
+        val uris: List<Uri> = if (i.action == Intent.ACTION_SEND_MULTIPLE)
+            i.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: emptyList()
+        else listOfNotNull(i.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+        if (uris.isEmpty()) {
+            val text = i.getStringExtra(Intent.EXTRA_TEXT) ?: return true
+            pendingJs = "window.JarvisNative && window.JarvisNative.prefill && window.JarvisNative.prefill(${org.json.JSONObject.quote(text)})"
+            deliverPendingJs()
+            return true
+        }
+        if (serverUrl.isEmpty()) {
+            Toast.makeText(this, "Bitte Jarvis zuerst einrichten.", Toast.LENGTH_LONG).show()
+            return true
+        }
+        Toast.makeText(this, "Wird an Jarvis geschickt …", Toast.LENGTH_SHORT).show()
+        Thread {
+            val metas = org.json.JSONArray()
+            for (u in uris.take(10)) {
+                try { metas.put(Api.uploadUri(this, u)) } catch (e: Exception) {
+                    runOnUiThread { Toast.makeText(this, "Hochladen fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show() }
+                }
+            }
+            if (metas.length() > 0) runOnUiThread {
+                pendingJs = "window.JarvisNative && window.JarvisNative.filesShared && window.JarvisNative.filesShared(${metas})"
+                deliverPendingJs()
+            }
+        }.start()
         return true
     }
 
@@ -248,6 +282,7 @@ class MainActivity : Activity() {
             deliverPendingJs()
             return
         }
+        if (takeShareIntent(intent)) return
         if (isTalkIntent(intent)) {
             webView.evaluateJavascript("window.JarvisNative && window.JarvisNative.listen && window.JarvisNative.listen()", null)
         }

@@ -126,6 +126,7 @@ class Brain:
 
         def server(module: str, **env: str) -> dict:
             base = {"JARVIS_DATA": str(self.cfg.data_dir), "JARVIS_TIMEZONE": self.cfg.timezone,
+                    "JARVIS_WORKSPACE": str(self.cfg.workspace),
                     "PYTHONPATH": pkg_root}
             return {"command": sys.executable, "args": ["-m", module], "env": {**base, **env}}
 

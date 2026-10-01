@@ -34,6 +34,12 @@ from pathlib import Path
 VERSION = "1.0"
 SYSTEM = platform.system()  # "Windows", "Darwin", "Linux"
 COMMANDS_FILE = Path.home() / ".jarvis-pc-commands.json"
+# Dateizugriff: welche Ordner Jarvis sehen darf (Standard: dein Benutzerordner), max. Größe
+CONFIG_FILE = Path.home() / ".jarvis-pc-config.json"
+SAVE_DIR = Path.home() / "Downloads" / "Jarvis"
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".cache", "AppData", "Library", ".Trash", "$RECYCLE.BIN",
+             ".venv", "venv", ".gradle", ".npm", ".m2", "site-packages"}
+_AGENT = None  # laufender Agent (für Datei-Upload/-Download)
 
 PC_ACTION_TYPES = {
     "open_url": "Webseite öffnen (url)",
@@ -51,6 +57,11 @@ PC_ACTION_TYPES = {
     "clipboard_get": "Zwischenablage lesen",
     "status": "Gerätestatus (Akku, System)",
     "run": "Freigegebenen Befehl ausführen (name)",
+    "files_list": "Ordnerinhalt auflisten (path, pattern)",
+    "files_search": "Dateien suchen (query, path, ext)",
+    "file_read": "Textdatei lesen (path)",
+    "file_upload": "Datei an Jarvis schicken (path)",
+    "file_download": "Datei von Jarvis speichern (file_id, name, folder)",
 }
 
 
@@ -336,6 +347,115 @@ def act_run(p):
     return {"exit": out.returncode, "output": (out.stdout + out.stderr).strip()[-2000:]}
 
 
+# ----------------------------------------------------------------- Dateien
+def pc_config() -> dict:
+    try:
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def allowed_roots() -> list[Path]:
+    roots = pc_config().get("roots") or [str(Path.home())]
+    return [Path(os.path.expanduser(r)).resolve() for r in roots]
+
+
+def safe_path(path: str, must_exist: bool = True) -> Path:
+    """Pfad auflösen und prüfen, dass er in einem freigegebenen Ordner liegt."""
+    raw = os.path.expanduser(str(path or "~"))
+    p = Path(raw)
+    if not p.is_absolute():
+        p = Path.home() / p
+    p = p.resolve()
+    if not any(p == r or r in p.parents for r in allowed_roots()):
+        raise PermissionError(f"'{p}' liegt außerhalb der freigegebenen Ordner "
+                              f"({', '.join(str(r) for r in allowed_roots())})")
+    if must_exist and not p.exists():
+        raise FileNotFoundError(f"'{p}' gibt es nicht")
+    return p
+
+
+def _entry(p: Path) -> dict:
+    st = p.stat()
+    return {"name": p.name, "path": str(p), "type": "ordner" if p.is_dir() else "datei",
+            "size_kb": None if p.is_dir() else round(st.st_size / 1024, 1),
+            "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))}
+
+
+def act_files_list(p):
+    import fnmatch
+
+    folder = safe_path(p.get("path") or "~")
+    if not folder.is_dir():
+        return _entry(folder)
+    pattern = (p.get("pattern") or "*").lower()
+    items = [c for c in folder.iterdir() if not c.name.startswith(".") and fnmatch.fnmatch(c.name.lower(), pattern)]
+    items.sort(key=lambda c: (not c.is_dir(), -c.stat().st_mtime))
+    return {"folder": str(folder), "count": len(items), "entries": [_entry(c) for c in items[:200]]}
+
+
+def act_files_search(p):
+    query = (p.get("query") or "").lower()
+    ext = (p.get("ext") or "").lower().lstrip(".")
+    start = [safe_path(p["path"])] if p.get("path") else allowed_roots()
+    hits, end = [], time.time() + 15
+    for root in start:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+            for f in filenames:
+                low = f.lower()
+                if (not query or query in low) and (not ext or low.endswith("." + ext)):
+                    try:
+                        hits.append(_entry(Path(dirpath) / f))
+                    except OSError:
+                        continue
+            if len(hits) >= 300 or time.time() > end:
+                break
+    hits.sort(key=lambda h: h["modified"], reverse=True)
+    return {"count": len(hits), "results": hits[:50], "complete": time.time() <= end}
+
+
+def act_file_read(p):
+    path = safe_path(p["path"])
+    if path.is_dir():
+        raise IsADirectoryError(f"'{path}' ist ein Ordner")
+    binary_ext = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".zip", ".png", ".jpg",
+                  ".jpeg", ".gif", ".webp", ".heic", ".mp3", ".mp4", ".mov", ".exe", ".dmg", ".iso"}
+    data = path.read_bytes()[:400_000]
+    if path.suffix.lower() in binary_ext or b"\x00" in data[:4000]:
+        raise ValueError("Keine Textdatei – für PDFs/Bilder/Office-Dateien file_upload verwenden")
+    text = data.decode("utf-8", errors="replace")
+    limit = int(p.get("max_chars") or 20_000)
+    return {"path": str(path), "content": text[:limit], "truncated": len(text) > limit}
+
+
+def act_file_upload(p):
+    if _AGENT is None:
+        raise RuntimeError("Upload nur im laufenden Agent möglich")
+    path = safe_path(p["path"])
+    if path.is_dir():
+        raise IsADirectoryError(f"'{path}' ist ein Ordner – einzelne Dateien senden")
+    max_mb = float(pc_config().get("max_mb", 100))
+    if path.stat().st_size > max_mb * 1024 * 1024:
+        raise ValueError(f"Datei größer als {max_mb:.0f} MB (in ~/.jarvis-pc-config.json änderbar: max_mb)")
+    return _AGENT.upload(path)
+
+
+def act_file_download(p):
+    if _AGENT is None:
+        raise RuntimeError("Download nur im laufenden Agent möglich")
+    folder = safe_path(p["folder"], must_exist=False) if p.get("folder") else SAVE_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    name = Path(p.get("name") or "datei").name  # keine Pfadangaben aus dem Namen übernehmen
+    target = folder / name
+    n = 1
+    while target.exists():
+        target = folder / f"{Path(name).stem}_{n}{Path(name).suffix}"
+        n += 1
+    _AGENT.download(p["file_id"], target)
+    return {"saved": str(target), "size_kb": round(target.stat().st_size / 1024, 1)}
+
+
 ACTIONS = {name: globals()[f"act_{name}"] for name in PC_ACTION_TYPES}
 
 
@@ -364,11 +484,37 @@ class Agent:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
 
+    def upload(self, path: Path) -> dict:
+        """Datei als multipart/form-data an /api/files schicken (nur Standardbibliothek)."""
+        import mimetypes
+        import uuid
+
+        boundary = uuid.uuid4().hex
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        head = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+                f"filename=\"{urllib.parse.quote(path.name)}\"\r\nContent-Type: {ctype}\r\n\r\n").encode()
+        source = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"source\"\r\n\r\n"
+                  f"PC {self.name}: {path}\r\n").encode()
+        body = source + head + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(self.server + "/api/files", data=body, method="POST", headers={
+            "Authorization": f"Bearer {self.token}", "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": f"jarvis-pc-agent/{VERSION}"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return json.loads(r.read())
+
+    def download(self, file_id: str, target: Path) -> None:
+        req = urllib.request.Request(f"{self.server}/api/files/{urllib.parse.quote(file_id)}", headers={
+            "Authorization": f"Bearer {self.token}", "User-Agent": f"jarvis-pc-agent/{VERSION}"})
+        with urllib.request.urlopen(req, timeout=300) as r, open(target, "wb") as f:
+            shutil.copyfileobj(r, f)
+
     def hello(self) -> None:
         self._req("POST", "/api/pc/hello", {"device": self.name, "system": f"{SYSTEM} {platform.release()}",
                                             "commands": sorted(load_commands()), "version": VERSION})
 
     def run_forever(self) -> None:
+        global _AGENT
+        _AGENT = self
         print(f"Jarvis-PC-Agent „{self.name}“ verbindet mit {self.server} …", flush=True)
         backoff = 2
         registered = False

@@ -50,6 +50,7 @@ Telegram kosten ebenfalls nichts.
 | **Standort** (in der App) | „Wo ist die nächste Apotheke?“ · „Wie wird das Wetter hier?“ · „Wie lange brauche ich von hier nach Hause?“ |
 | **GitHub** | „Was ist auf GitHub los?“ · „Ist der Build von jarvis grün?“ · „Welche Reviews warten auf mich?“ · „Leg ein Issue an: Login-Button ist kaputt“ |
 | **Laptop/PC** | „Mach Musik an“ · „Lauter“ · „Öffne Spotify“ · „Sperr meinen Laptop“ · „Öffne meinen Downloads-Ordner“ · „Wie voll ist der Akku vom Laptop?“ · „Kopier mir den Entwurf in die Zwischenablage“ |
+| **Dateien** | „Welche PDFs liegen in meinen Downloads?“ · „Schick mir die Rechnung von Vodafone aufs Handy“ · „Was steht in notizen.txt auf dem Laptop?“ · Datei am Handy **teilen → Jarvis**: „Leg das auf dem Laptop in Dokumente ab“ |
 | **Erweitert sich selbst** | „Wenn auf eventim.de/… *Tickets verfügbar* steht, ruf mich an“ · „Jeden Montag um 8 fass mir die Woche zusammen“ · „Sag Bescheid, wenn der Preis unter 300 € fällt“ · „So legst du meine Rechnungen ab: …“ (wird zum Skill) |
 | **Jarvis meldet sich** | Nachrichten aufs Handy, bei Dringendem **ruft Jarvis an**: Das Handy klingelt, du nimmst ab, Jarvis sagt, was los ist, und hört auf deine Antwort |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
@@ -287,6 +288,27 @@ nimmst du die Tailscale-Adresse des PCs. Läuft Jarvis **auf dem Handy**, setz d
 {"backup": "C:\\Skripte\\backup.bat", "teams": "start msteams:", "vpn": "rasdial Firma"}
 ```
 Jarvis kann nur diese Namen ausführen („Starte das Backup“), keine beliebigen Befehle.
+
+### Dateien: Laptop ↔ Jarvis ↔ Handy
+
+- **Auf dem Laptop suchen und lesen:** „Such auf dem Laptop nach Mietvertrag“, „Was liegt im
+  Downloads-Ordner?“, „Lies mir notizen.txt vor“. Textdateien liest Jarvis direkt. Andere Dateien
+  (PDF, Bilder …) holt er zu sich und kann sie dann ebenfalls ansehen.
+- **Aufs Handy schicken:** „Schick mir die Präsentation von gestern aufs Handy.“ Jarvis holt die Datei
+  vom Laptop, und die App lädt sie nach **Downloads/Jarvis** (das geht auch im Hintergrund, mit
+  Benachrichtigung). Ohne App kommt sie per Telegram, falls das eingerichtet ist. Im Browser
+  erscheint ein Download-Knopf.
+- **Vom Handy zum Laptop:** Öffne die Datei in einer beliebigen App (Galerie, Dateien, WhatsApp …),
+  tippe auf **Teilen → Jarvis** und schreib oder sag dazu, was passieren soll, z.B. „Leg das auf
+  dem Laptop unter Dokumente/Rechnungen ab“. Auf dem Laptop landet sie standardmäßig in
+  `Downloads/Jarvis`.
+- **Grenzen:** Jarvis kommt nur an Ordner, die du auf dem Laptop freigibst. Standard ist dein
+  Benutzerordner. Einschränken geht in `~/.jarvis-pc-config.json`:
+  ```json
+  {"roots": ["~/Documents", "~/Downloads", "D:\\Fotos"], "max_mb": 100}
+  ```
+  Jarvis löscht oder überschreibt keine Dateien auf dem Laptop. Bei Jarvis selbst bleiben Dateien
+  14 Tage in `workspace/dateien/`.
 
 ---
 
@@ -541,6 +563,7 @@ jarvis/
   mcp_github.py     MCP-Server: GitHub (Benachrichtigungen, PRs, Issues, CI)
   pc.py             PC-Agent (nur Standardbibliothek, läuft eigenständig auf jedem Laptop)
   mcp_pc.py         MCP-Server: Laptop/PC steuern
+  files.py          Dateiablage (Handy ↔ Jarvis ↔ PC)
   actions.py        Aufgaben-Warteschlange für Geräte (Handy, PCs)
   tasks.py          Daueraufträge & Webseiten-Wächter
   mcp_tasks.py      MCP-Server: Jarvis legt Aufträge selbst an

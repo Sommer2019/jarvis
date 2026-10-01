@@ -159,6 +159,12 @@ class JarvisService : Service() {
         when {
             type == "notify" -> { showMessage(this, p.optString("title", "Jarvis"), p.optString("text")); ack(id) }
             type == "ring" -> { showIncomingCall(this, p.optString("text")); ack(id) }
+            type == "file" -> {
+                try { Api.downloadFile(this, p.optString("file_id"), p.optString("name")) } catch (e: Exception) {
+                    showMessage(this, "Jarvis", "Download fehlgeschlagen: ${p.optString("name")} (${e.message})")
+                }
+                ack(id)
+            }
             type.startsWith("calendar_") -> {
                 if (CalendarOps.run(this, type, p)) {
                     ack(id)

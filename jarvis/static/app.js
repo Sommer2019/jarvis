@@ -77,6 +77,7 @@
   }
 
   let lastCall = null;      // Text eines angenommenen Jarvis-Anrufs
+  let attachments = [];     // per „Teilen → Jarvis“ hochgeladene Dateien
   let listenAfterSpeak = false;
 
   async function send(text, voice) {
@@ -85,6 +86,11 @@
     if (lastCall) {           // Jarvis weiß so, worauf sich die Antwort bezieht
       text = `(Antwort auf deinen Anruf: „${lastCall}“) ${text}`;
       lastCall = null;
+    }
+    if (attachments.length) { // Jarvis bekommt Name + Ablageort der geteilten Dateien
+      const info = attachments.map((f) => `${f.name} (file_id ${f.id}, ${f.workspace_path})`).join("; ");
+      text = `[Datei(en) vom Handy: ${info}] ${text}`;
+      attachments = [];
     }
     busy = true; setState("busy");
     const pending = add("…", "bot", "pending");
@@ -131,6 +137,7 @@
     calendar_add: (p) => `📅 Termin „${p.title}“ eingetragen`,
     calendar_update: () => "📅 Termin geändert",
     calendar_delete: () => "📅 Termin gelöscht",
+    file: (p) => `📄 ${p.name} – Download gestartet (Downloads/Jarvis)`,
   };
 
   // Browser-Fallback: Links, die Android/iOS selbst öffnen können
@@ -143,6 +150,7 @@
       case "whatsapp": return `https://wa.me/${digits(p.number).replace("+", "")}?text=${encodeURIComponent(p.text || "")}`;
       case "navigate": return "https://www.google.com/maps/dir/?api=1&destination=" + encodeURIComponent(p.destination || "");
       case "open_url": return p.url;
+      case "file": return `/api/files/${encodeURIComponent(p.file_id)}?token=${encodeURIComponent(token)}`;
       default: return null; // Wecker/Timer gehen nur in der App
     }
   }
@@ -165,10 +173,20 @@
   window.JarvisNative = window.JarvisNative || {};
   window.JarvisNative.incomingCall = incomingCall;
   window.JarvisNative.showMessage = showJarvisMessage;
+  // „Teilen → Jarvis“: die App hat die Dateien schon hochgeladen
+  window.JarvisNative.filesShared = (metas) => {
+    for (const f of metas || []) {
+      attachments.push(f);
+      add(`📎 ${f.name} (${f.size_kb} KB) – sag Jarvis, was damit passieren soll`, "bot", "action");
+    }
+    $("text").focus();
+  };
+  window.JarvisNative.prefill = (t) => { $("text").value = t; $("text").focus(); };
 
   function handleActions(actions) {
     for (const a of actions || []) {
       if (done.has(a.id)) continue;
+      if (a.type === "file" && native && native.backgroundActive && native.backgroundActive()) continue;
       if (a.type === "notify" || a.type === "ring") {
         // Mit Hintergrund-Verbindung zeigt die App das selbst als Benachrichtigung/Anruf
         if (native && native.backgroundActive && native.backgroundActive()) continue;
@@ -189,7 +207,8 @@
       const el = document.createElement("a");
       el.className = "msg bot action-btn";
       el.href = href; el.target = "_blank"; el.rel = "noopener";
-      el.textContent = ACTION_LABELS[a.type]?.(a.params) || a.type;
+      el.textContent = a.type === "file" ? `📄 ${a.params.name} herunterladen` : (ACTION_LABELS[a.type]?.(a.params) || a.type);
+      if (a.type === "file") el.download = a.params.name || "";
       el.onclick = () => ack(a);
       log.appendChild(el);
       done.add(a.id);

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from . import stt, tts
 from .brain import Brain
 from .config import Config
+from .files import FileStore
 from .pcstore import PcStore
 from .phone import PhoneStore
 
@@ -108,6 +109,7 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
     token = resolve_token(cfg)
     phone = PhoneStore(cfg.data_dir)
     pcs = PcStore(cfg.data_dir)
+    files = FileStore(cfg.workspace, cfg.data_dir)
 
     async def long_poll(fetch, wait: int):
         """Wartet bis zu `wait` Sekunden auf neue Aufgaben (spart Akku/Traffic gegenüber Dauerabfragen)."""
@@ -201,6 +203,28 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
     @app.post("/api/pc/actions/{action_id}/done", dependencies=[Depends(auth)])
     async def pc_action_done(action_id: str, body: ActionDone):
         return {"ok": pcs.queue.done(action_id, body.result, body.ok)}
+
+    # ----------------------------------------------------------- Dateien
+    @app.post("/api/files", dependencies=[Depends(auth)])
+    async def file_upload(file: UploadFile = File(...), source: str = Form("")):
+        from urllib.parse import unquote
+
+        try:
+            meta = await asyncio.to_thread(files.save, file.file, unquote(file.filename or "datei"), source)
+        except ValueError as e:
+            raise HTTPException(413, str(e))
+        return meta
+
+    @app.get("/api/files", dependencies=[Depends(auth)])
+    async def file_list():
+        return {"files": files.list()}
+
+    @app.get("/api/files/{file_id}", dependencies=[Depends(auth)])
+    async def file_download(file_id: str):
+        meta = files.get(file_id)
+        if not meta or not files.path(meta).exists():
+            raise HTTPException(404, "Datei nicht (mehr) vorhanden")
+        return FileResponse(files.path(meta), filename=meta["name"], media_type=meta["mime"])
 
     # ---------------------------------------------------------- WhatsApp
     @app.get("/webhook/whatsapp")

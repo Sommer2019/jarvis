@@ -19,7 +19,7 @@ from .actions import ActionQueue
 
 ACTION_TTL = 10 * 60  # nicht ausgeführte Aktionen verfallen nach 10 Minuten
 # Nachrichten/Anrufe von Jarvis leben länger (Handy evtl. gerade offline)
-ACTION_TTL_BY_TYPE = {"notify": 12 * 3600, "ring": 30 * 60,
+ACTION_TTL_BY_TYPE = {"notify": 12 * 3600, "ring": 30 * 60, "file": 24 * 3600,
                       "calendar_add": 24 * 3600, "calendar_update": 24 * 3600, "calendar_delete": 24 * 3600}
 
 ACTION_TYPES = {
@@ -35,6 +35,7 @@ ACTION_TYPES = {
     "calendar_delete": "Termin im Handy-Kalender löschen",
     "notify": "Benachrichtigung von Jarvis aufs Handy (title, text)",
     "ring": "Jarvis „ruft an“ – Anruf-Bildschirm mit Nachricht (text)",
+    "file": "Datei aufs Handy laden (file_id, name)",
 }
 
 

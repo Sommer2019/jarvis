@@ -205,6 +205,9 @@ class JarvisBridge(private val activity: MainActivity) {
         val action = JSONObject(json)
         val p = action.optJSONObject("params") ?: JSONObject()
         if (action.optString("type").startsWith("calendar_")) return runCalendarAction(action.optString("type"), p)
+        if (action.optString("type") == "file") {
+            return try { Api.downloadFile(activity, p.optString("file_id"), p.optString("name")); true } catch (e: Exception) { false }
+        }
         val number = p.optString("number").filter { it.isDigit() || it == '+' }
         val intent = when (action.optString("type")) {
             // DIAL öffnet nur die Telefon-App mit der Nummer – anrufen tippst du selbst
