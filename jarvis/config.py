@@ -84,6 +84,17 @@ class Config:
     whisper_device: str = field(default_factory=lambda: os.getenv("WHISPER_DEVICE", "auto"))
     piper_voice: str = field(default_factory=lambda: os.getenv("PIPER_VOICE", ""))  # Pfad zur .onnx
 
+    # --- Jarvis telefoniert selbst (Zweit-SIM im Handy, Audio am PC) -------
+    # Audiogeräte am PC: Name (Teil reicht) oder Nummer aus `jarvis call-setup`
+    call_audio_in: str = field(default_factory=lambda: os.getenv("CALL_AUDIO_IN", ""))    # hört das Gegenüber
+    call_audio_out: str = field(default_factory=lambda: os.getenv("CALL_AUDIO_OUT", ""))  # spricht ins Gespräch
+    call_max_minutes: int = field(default_factory=lambda: int(os.getenv("CALL_MAX_MINUTES", "6")))
+    call_model: str = field(default_factory=lambda: os.getenv("JARVIS_CALL_MODEL", ""))  # z.B. haiku (schneller)
+
+    @property
+    def calls_enabled(self) -> bool:
+        return bool(self.call_audio_in and self.call_audio_out)
+
     # --- Automatische Routinen ---------------------------------------------
     briefing_time: str = field(default_factory=lambda: os.getenv("JARVIS_BRIEFING_TIME", ""))  # z.B. 07:30
     inbox_check_minutes: int = field(default_factory=lambda: int(os.getenv("JARVIS_INBOX_CHECK_MINUTES", "0")))

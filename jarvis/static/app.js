@@ -137,6 +137,8 @@
     calendar_add: (p) => `📅 Termin „${p.title}“ eingetragen`,
     calendar_update: () => "📅 Termin geändert",
     calendar_delete: () => "📅 Termin gelöscht",
+    agent_call: (p) => `🤖📞 Jarvis ruft ${p.name || p.number} an – Ergebnis kommt danach`,
+    agent_hangup: () => "🤖📞 Jarvis hat aufgelegt",
     file: (p) => `📄 ${p.name} – Download gestartet (Downloads/Jarvis)`,
   };
 
@@ -186,7 +188,8 @@
   function handleActions(actions) {
     for (const a of actions || []) {
       if (done.has(a.id)) continue;
-      if (a.type === "file" && native && native.backgroundActive && native.backgroundActive()) continue;
+      if (!native && a.type.startsWith("agent_")) continue; // gehört der Handy-App, nicht dem Browser
+      if (["file", "agent_call", "agent_hangup"].includes(a.type) && native && native.backgroundActive && native.backgroundActive()) continue;
       if (a.type === "notify" || a.type === "ring") {
         // Mit Hintergrund-Verbindung zeigt die App das selbst als Benachrichtigung/Anruf
         if (native && native.backgroundActive && native.backgroundActive()) continue;

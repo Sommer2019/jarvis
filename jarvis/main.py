@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 from pathlib import Path
 
@@ -67,10 +68,19 @@ async def _serve() -> None:
         agent = Agent(f"http://127.0.0.1:{config.port}", resolve_token(config), os.getenv("JARVIS_PC_NAME", ""))
         threading.Thread(target=agent.run_forever, daemon=True, name="pc-agent").start()
 
+    call_task = None
+    if config.calls_enabled:
+        from .calls import CallAgent
+
+        call_task = asyncio.create_task(CallAgent(config, brain).run_forever())
+        logging.info("Jarvis-Telefonate aktiv (Ton: %s → %s)", config.call_audio_in, config.call_audio_out)
+
     server = uvicorn.Server(uvicorn.Config(app, host=config.host, port=config.port, log_level="info"))
     try:
         await server.serve()
     finally:
+        if call_task:
+            call_task.cancel()
         scheduler.stop()
         if bot:
             await bot.stop()
@@ -366,6 +376,7 @@ def _doctor() -> int:
     from . import tts
     check("Sprachausgabe auf dem Server (Piper)", tts.available(config),
           "natürliche Jarvis-Stimme für App & Telegram: jarvis voice-setup", optional=True)
+    check("Jarvis telefoniert selbst", config.calls_enabled, "optional: jarvis call-setup", optional=True)
     check("ffmpeg", bool(shutil.which("ffmpeg")), "nur mit Piper nötig: apt install ffmpeg", optional=True)
     print("\n" + ("Alles bereit. ✅" if ok else "Bitte die ❌-Punkte beheben."))
     return 0 if ok else 1
@@ -410,6 +421,60 @@ def _dav_ok() -> bool:
         return False
 
 
+def _call_setup() -> int:
+    """Audiogeräte für Jarvis-Telefonate wählen und testen."""
+    try:
+        import sounddevice as sd
+    except ImportError:
+        print("Fehlt: pip install -e '.[calls]'  (sounddevice, numpy, Whisper, Piper)")
+        return 1
+    from . import calls
+
+    devices = sd.query_devices()
+    print("Audiogeräte:")
+    for i, d in enumerate(devices):
+        kinds = ("🎤" if d["max_input_channels"] else "  ") + ("🔊" if d["max_output_channels"] else "  ")
+        print(f"  {i:3d} {kinds} {d['name']}")
+    print("\nCALL_AUDIO_IN  = Gerät, auf dem der Ton des GEGENÜBERS ankommt (🎤, z.B. „CABLE Output“)")
+    print("CALL_AUDIO_OUT = Gerät, über das Jarvis INS GESPRÄCH spricht (🔊, z.B. „CABLE-A Input“)")
+    cin = input(f"CALL_AUDIO_IN [{config.call_audio_in}]: ").strip() or config.call_audio_in
+    cout = input(f"CALL_AUDIO_OUT [{config.call_audio_out}]: ").strip() or config.call_audio_out
+    if not (cin and cout):
+        print("Abgebrochen.")
+        return 1
+    try:
+        calls.find_device(cin, "input")
+        calls.find_device(cout, "output")
+    except RuntimeError as e:
+        print(f"❌ {e}")
+        return 1
+    set_env_value("CALL_AUDIO_IN", cin)
+    set_env_value("CALL_AUDIO_OUT", cout)
+    if not config.user_name:
+        name = input("Dein Vorname (Jarvis sagt am Telefon „im Auftrag von …“): ").strip()
+        if name:
+            set_env_value("JARVIS_USER_NAME", name)
+    print("✅ gespeichert. Test: Jarvis spricht 3 s auf CALL_AUDIO_OUT und hört 5 s auf CALL_AUDIO_IN …")
+    try:
+        import numpy as np
+
+        audio = calls.SoundDeviceAudio(cin, cout)
+        t = np.linspace(0, 1.5, int(16000 * 1.5), dtype=np.float32)
+        audio.play(0.2 * np.sin(2 * np.pi * 440 * t), 16000)
+        peak, end = 0.0, time.time() + 5
+        for frame in audio.frames(timeout=1.0):
+            peak = max(peak, float(np.abs(frame).max()))
+            if time.time() > end:
+                break
+        audio.close()
+        print(f"   Lautester Ton am Eingang: {peak:.3f} " + ("(✅ Ton kommt an)" if peak > 0.01 else
+              "(⚠️ Stille – im Gespräch prüfen, ob das Gegenüber wirklich auf diesem Gerät ankommt)"))
+    except Exception as e:  # noqa: BLE001
+        print(f"   ⚠️ Test fehlgeschlagen: {type(e).__name__}: {e}")
+    print("Jarvis neu starten. Dann z.B.: „Ruf beim Friseur Müller an und mach einen Termin für Samstag aus.“")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="jarvis", description="Dein persönlicher Assistent")
     sub = parser.add_subparsers(dest="cmd")
@@ -426,6 +491,7 @@ def main() -> None:
     pa.add_argument("--name", default="", help="Name dieses PCs")
     pa.add_argument("--install", action="store_true", help="Autostart einrichten")
     sub.add_parser("token", help="Web-Token für die Handy-App anzeigen")
+    sub.add_parser("call-setup", help="Jarvis selbst telefonieren lassen: Audiogeräte wählen/testen")
     pv = sub.add_parser("voice-setup", help="Natürliche deutsche Stimme (Piper) einrichten")
     pv.add_argument("--voice", default="thorsten", help="thorsten, thorsten_emotional, kerstin, ramona")
     pv.add_argument("--quality", default="", help="high, medium oder low (Standard: passend zum Gerät)")
@@ -462,6 +528,8 @@ def main() -> None:
         sys.exit(_login())
     elif args.cmd == "doctor":
         sys.exit(_doctor())
+    elif args.cmd == "call-setup":
+        sys.exit(_call_setup())
     elif args.cmd == "voice-setup":
         from . import voice_setup
 

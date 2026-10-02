@@ -100,3 +100,13 @@ async def test_github_server_when_token(brain, monkeypatch):
     call = brain.calls()[0]
     assert "mcp__github" in call["argv"][call["argv"].index("--allowedTools") + 1]
     assert "[Standort: Berlin]" in call["prompt"]
+
+
+async def test_lite_mode_for_calls(brain):
+    r = await brain.ask("Gegenüber: Hallo", "call:abc", lite=True, model="haiku", context="[TELEFONAT …]")
+    assert not r.is_error
+    argv = brain.calls()[0]["argv"]
+    assert argv[argv.index("--tools") + 1] == ""                  # keine Tools im Telefonat
+    assert "--allowedTools" not in argv and argv[argv.index("--model") + 1] == "haiku"
+    assert json.loads(Path(argv[argv.index("--mcp-config") + 1]).read_text()) == {"mcpServers": {}}
+    assert brain.lite_workspace().exists() and not (brain.lite_workspace() / "CLAUDE.md").exists()

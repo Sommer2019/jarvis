@@ -39,3 +39,18 @@ async def transcribe(audio: bytes, cfg: Config, suffix: str = ".ogg") -> str:
         f.write(audio)
         f.flush()
         return await asyncio.to_thread(_transcribe_file, f.name, cfg)
+
+
+# Whisper erfindet bei Rauschen/Freizeichen gern solche Sätze – verwerfen
+HALLUCINATIONS = ("untertitel", "copyright", "vielen dank fürs zuschauen", "swr", "zdf", "amara.org")
+
+
+def transcribe_pcm(samples, cfg: Config) -> str:
+    """16-kHz-Mono-Audio (float32-Array) → Text. Für Telefonate (läuft im Thread)."""
+    model = _model(cfg.whisper_model, cfg.whisper_device)
+    segments, _ = model.transcribe(samples, language=cfg.language or None, vad_filter=True,
+                                   beam_size=1, condition_on_previous_text=False)
+    text = " ".join(s.text.strip() for s in segments).strip()
+    if not text or any(h in text.lower() for h in HALLUCINATIONS) and len(text) < 80:
+        return ""
+    return text

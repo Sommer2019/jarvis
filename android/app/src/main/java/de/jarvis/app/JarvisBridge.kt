@@ -229,6 +229,10 @@ class JarvisBridge(private val activity: MainActivity) {
         val action = JSONObject(json)
         val p = action.optJSONObject("params") ?: JSONObject()
         if (action.optString("type").startsWith("calendar_")) return runCalendarAction(action.optString("type"), p)
+        if (action.optString("type") == "agent_call") {
+            return AgentCall.start(activity, p.optString("call_id"), p.optString("number"), p.optString("name"))
+        }
+        if (action.optString("type") == "agent_hangup") { AgentCall.hangup(activity, p.optString("call_id")); return true }
         if (action.optString("type") == "file") {
             return try { Api.downloadFile(activity, p.optString("file_id"), p.optString("name")); true } catch (e: Exception) { false }
         }
