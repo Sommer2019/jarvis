@@ -207,8 +207,9 @@ Ubuntu-Umgebung. Die APK ist dein Frontend und startet alles automatisch.
    ```
    Das Skript richtet die Ubuntu-Umgebung, Claude Code und Jarvis ein. Zwischendurch meldest du dich
    einmal mit deinem Claude-Abo an: den Link antippen, einloggen und den Token einfügen.
-   Ist das Repo privat, verwende `https://<github-token>@github.com/…` als Adresse. Liegt die aktuelle
-   Version nicht auf `master`, setz vorher `export JARVIS_BRANCH=<branch>`.
+   Ist das Repo privat, verwende `https://<github-token>@github.com/…` als Adresse. Standardmäßig
+   nimmt Jarvis den Standard-Branch auf GitHub. Einen anderen Branch wählst du vorher mit
+   `export JARVIS_BRANCH=<branch>`.
 3. **Jarvis-App** (APK) öffnen, „Jarvis läuft auf diesem Handy“ ankreuzen und den Token einfügen
    (er liegt in der Zwischenablage oder steht am Ende der Installation).
 4. In den Android-Einstellungen der Jarvis-App die Berechtigung **„Befehle in Termux ausführen“**
@@ -267,7 +268,7 @@ Dateien öffnen, Musik (Play/Pause/Weiter), Lautstärke, Bildschirm sperren, Sta
 **Anderer Laptop (Windows, macOS, Linux):**
 1. Python 3 installieren (Windows: python.org, bei der Installation „Add to PATH“ anhaken).
 2. Die Datei `pc.py` herunterladen:
-   <https://raw.githubusercontent.com/Sommer2019/jarvis/master/jarvis/pc.py>
+   <https://raw.githubusercontent.com/Sommer2019/jarvis/HEAD/jarvis/pc.py>
 3. Testen:
    ```bash
    python pc.py --server http://<jarvis-adresse>:8080 --token DEIN_TOKEN --name Arbeitslaptop
@@ -376,6 +377,27 @@ für den Anruf-Bildschirm. Die Verbindung startet nach einem Neustart automatisc
 
 ## Vom Handy aus nutzen
 
+### Natürliche deutsche Stimme („Thorsten“)
+
+Die eingebauten Handy-Stimmen klingen oft blechern. Viel natürlicher ist **Thorsten**, eine ruhige
+männliche deutsche Stimme von Piper. Sie läuft kostenlos und offline auf deinem Jarvis-Server (PC
+oder Handy) und braucht kein Abo-Kontingent.
+
+```bash
+jarvis voice-setup          # Handy: erst ~/jarvis-shell.sh, dann diesen Befehl
+```
+Der Befehl installiert Piper, lädt die Stimme (PC: ca. 110 MB in höchster Qualität, Handy: die
+schnellere Variante mit ca. 60 MB) und trägt sie in `.env` ein. Danach startest du Jarvis neu
+(Handy: `~/jarvis-stop.sh && ~/jarvis-start.sh`).
+
+Die App nutzt die Stimme danach automatisch. Unter **⚙ → Stimme** kannst du zwischen „★ Natürliche
+Stimme Thorsten“ und den Handy-Stimmen wechseln, das Tempo einstellen und eine Probe hören. Lange
+Antworten liest Jarvis Satz für Satz vor, damit es sofort losgeht. Ist der Server nicht erreichbar,
+springt die Handy-Stimme ein. Auch Telegram, Discord und WhatsApp antworten mit dieser Stimme.
+
+Weitere Stimmen: `jarvis voice-setup --voice thorsten_emotional` (lebendiger), `--voice kerstin`
+oder `--voice ramona` (weiblich). Die Qualität wählst du mit `--quality high|medium|low`.
+
 ### Variante A: Jarvis-App für Android (APK, empfohlen)
 
 Die native App kann mehr als die Web-App: Sie nutzt die **Android-Spracherkennung und -Stimme**,
@@ -465,14 +487,8 @@ Danach hast du ein Jarvis-Icon auf dem Homescreen:
 3. Ab jetzt kannst du dem Bot Text oder **Sprachnachrichten** schicken. Mit `/neu` beginnt ein neues Gespräch.
    Über Telegram kommen auch Morgen-Briefing und Mail-Hinweise als Push.
 
-Damit Jarvis per **Sprachnachricht antwortet**, installierst du ffmpeg und eine Piper-Stimme:
-```bash
-sudo apt install ffmpeg
-mkdir -p models && cd models
-curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx
-curl -LO https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
-```
-Danach in `.env` eintragen: `PIPER_VOICE=models/de_DE-thorsten-high.onnx`
+Damit Jarvis per **Sprachnachricht antwortet**, richtest du die [natürliche Stimme](#natürliche-deutsche-stimme-thorsten)
+ein (`jarvis voice-setup`) und installierst ffmpeg (`sudo apt install ffmpeg`).
 
 ### Variante B2: Discord
 

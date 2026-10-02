@@ -253,27 +253,78 @@
       .trim();
   }
 
+  // Natürliche Stimme vom Jarvis-Server (Piper „Thorsten“, `jarvis voice-setup`):
+  // Satz für Satz – der nächste Satz wird berechnet, während der aktuelle läuft.
+  function speechChunks(text) {
+    const parts = text.match(/[^.!?…]+[.!?…]+["“”»«)]*\s*|[^.!?…]+$/g) || [text];
+    const out = []; let cur = "";
+    for (const p of parts) {
+      if (cur && (cur + p).length > (out.length ? 220 : 60)) { out.push(cur.trim()); cur = p; } else cur += p;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  let speechRun = 0, audio = null;
+  function stopSpeech() {
+    speechRun++;
+    if (audio) { audio.pause(); audio = null; }
+    if (native) native.stopSpeaking(); else window.speechSynthesis?.cancel();
+  }
+  function useServerVoice() {
+    if (!serverTTS) return false;
+    return native ? !!(native.serverVoice && native.serverVoice()) : store.get("jarvis-server-tts", "1") === "1";
+  }
+  async function speakServer(text, done) {
+    const run = ++speechRun;
+    const rate = native && native.voiceRate ? native.voiceRate() : 1;
+    const synth = (t) => api("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: t, rate }) }).then((r) => r.blob());
+    const parts = speechChunks(text);
+    let next = synth(parts[0]);
+    for (let i = 0; i < parts.length; i++) {
+      let blob;
+      try { blob = await next; } catch (e) { if (i === 0) throw e; break; }
+      if (run !== speechRun) return;
+      if (i + 1 < parts.length) next = synth(parts[i + 1]);
+      next?.catch?.(() => {});
+      await new Promise((resolve) => {
+        const url = URL.createObjectURL(blob);
+        audio = new Audio(url);
+        audio.onended = audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.play().catch(resolve);
+      });
+      if (run !== speechRun) return;
+    }
+    audio = null;
+    done();
+  }
+  // nur die Server-Stimme anhalten (z.B. für die Probe einer Handy-Stimme)
+  window.JarvisNative.stopServerAudio = () => { speechRun++; if (audio) { audio.pause(); audio = null; } };
+  window.JarvisNative.previewServerVoice = () => {
+    if (!serverTTS) {
+      add("Die natürliche Stimme ist auf dem Jarvis-Server noch nicht eingerichtet. Dort einmal " +
+          "„jarvis voice-setup“ ausführen und Jarvis neu starten.", "bot", "err");
+      return;
+    }
+    speakServer("Hallo, ich bin Jarvis. Wie kann ich dir helfen?", () => setState("idle"))
+      .catch((e) => add("Stimme nicht erreichbar: " + e.message, "bot", "err"));
+  };
+
   async function speak(raw) {
     const text = speakable(raw);
+    if (!text) return;
     setState("speaking");
     const done = () => {
       setState("idle");
       if (handsfree || listenAfterSpeak) { listenAfterSpeak = false; setTimeout(listen, 300); }
     };
+    if (useServerVoice()) {
+      try { await speakServer(text, done); return; } catch { /* Fallback auf die Handy-/Browser-Stimme */ }
+    }
     if (native) {
       window.JarvisNative.onSpeakDone = done;
       native.speak(text);
       return;
-    }
-    if (serverTTS) {
-      try {
-        const res = await api("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }) });
-        const audio = new Audio(URL.createObjectURL(await res.blob()));
-        audio.onended = done; audio.onerror = done;
-        await audio.play();
-        return;
-      } catch { /* Fallback auf Browser-Stimme */ }
     }
     if (!("speechSynthesis" in window)) return done();
     speechSynthesis.cancel();
@@ -287,8 +338,8 @@
 
   function listen() {
     if (busy || listening) return;
+    stopSpeech();
     if (native) return listenNative();
-    if ("speechSynthesis" in window) speechSynthesis.cancel();
     if (SR) return listenBrowser();
     return listenRecorder();
   }
@@ -393,7 +444,7 @@
   });
   $("btn-mute").onclick = () => {
     muted = !muted; store.set("jarvis-muted", muted ? "1" : "0");
-    if (muted) { native ? native.stopSpeaking() : window.speechSynthesis?.cancel(); }
+    if (muted) stopSpeech();
     refreshChips();
   };
   $("btn-handsfree").onclick = () => { handsfree = !handsfree; store.set("jarvis-handsfree", handsfree ? "1" : "0"); refreshChips(); setState("idle"); };
@@ -419,7 +470,8 @@
     if (!token) return showLogin(true);
     try {
       const h = await (await fetch("/api/health")).json();
-      serverTTS = !!h.tts && store.get("jarvis-server-tts", "0") === "1";
+      serverTTS = !!h.tts;
+      if (native && native.reportServerVoice) native.reportServerVoice(serverTTS);
       setState("idle");
     } catch { setState("err"); }
     if (!log.children.length) add("Hallo! Tippe auf das Mikrofon oder schreib mir eine Aufgabe.", "bot");

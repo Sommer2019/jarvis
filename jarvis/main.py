@@ -365,7 +365,7 @@ def _doctor() -> int:
               "nur für Sprachnachrichten in Telegram/Discord/WhatsApp: pip install -e '.[voice]'", optional=True)
     from . import tts
     check("Sprachausgabe auf dem Server (Piper)", tts.available(config),
-          "nur für Sprach-Antworten in Telegram/Discord: PIPER_VOICE setzen", optional=True)
+          "natürliche Jarvis-Stimme für App & Telegram: jarvis voice-setup", optional=True)
     check("ffmpeg", bool(shutil.which("ffmpeg")), "nur mit Piper nötig: apt install ffmpeg", optional=True)
     print("\n" + ("Alles bereit. ✅" if ok else "Bitte die ❌-Punkte beheben."))
     return 0 if ok else 1
@@ -426,6 +426,9 @@ def main() -> None:
     pa.add_argument("--name", default="", help="Name dieses PCs")
     pa.add_argument("--install", action="store_true", help="Autostart einrichten")
     sub.add_parser("token", help="Web-Token für die Handy-App anzeigen")
+    pv = sub.add_parser("voice-setup", help="Natürliche deutsche Stimme (Piper) einrichten")
+    pv.add_argument("--voice", default="thorsten", help="thorsten, thorsten_emotional, kerstin, ramona")
+    pv.add_argument("--quality", default="", help="high, medium oder low (Standard: passend zum Gerät)")
     args = parser.parse_args()
 
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"),
@@ -459,6 +462,11 @@ def main() -> None:
         sys.exit(_login())
     elif args.cmd == "doctor":
         sys.exit(_doctor())
+    elif args.cmd == "voice-setup":
+        from . import voice_setup
+
+        ok = voice_setup.setup(config.data_dir / "models", args.voice, args.quality, set_env=set_env_value)
+        sys.exit(0 if ok else 1)
     elif args.cmd == "token":
         from .server import resolve_token
 

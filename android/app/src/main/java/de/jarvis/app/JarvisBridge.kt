@@ -90,6 +90,7 @@ class JarvisBridge(private val activity: MainActivity) {
 
     /** Probe mit einer bestimmten Stimme/Einstellung, ohne sie zu speichern. */
     fun preview(voice: Voice?, rate: Float, pitch: Float) {
+        js("stopServerAudio")
         val t = tts ?: return
         voice?.let { runCatching { t.voice = it } }
         t.setSpeechRate(rate)
@@ -196,6 +197,29 @@ class JarvisBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun stopSpeaking() {
         tts?.stop()
+    }
+
+    /** Hat der Jarvis-Server eine natürliche Stimme (Piper)? Meldet die Web-Oberfläche nach dem Start. */
+    @Volatile private var serverVoiceReady = false
+    val serverVoiceAvailable: Boolean get() = serverVoiceReady
+
+    @JavascriptInterface
+    fun reportServerVoice(available: Boolean) { serverVoiceReady = available }
+
+    /** Server-Stimme nutzen? Standard: ja, sobald sie eingerichtet ist (jarvis voice-setup). */
+    @JavascriptInterface
+    fun serverVoice(): Boolean = activity.prefs.getBoolean("tts_server", true)
+
+    @JavascriptInterface
+    fun voiceRate(): Double = activity.prefs.getFloat("tts_rate", 1.0f).toDouble()
+
+    /** Probe der Server-Stimme (läuft in der Web-Oberfläche, die das Audio abspielt). */
+    fun previewServerVoice() {
+        tts?.stop()
+        activity.webView.post {
+            activity.webView.evaluateJavascript(
+                "window.JarvisNative && window.JarvisNative.previewServerVoice && window.JarvisNative.previewServerVoice()", null)
+        }
     }
 
     // --------------------------------------------------------------- Aktionen
