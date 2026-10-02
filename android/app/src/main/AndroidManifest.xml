@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Jarvis telefoniert selbst (Zweit-SIM): wählen, SIM auswählen, auflegen -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <!-- nur Android 8/9: Downloads nach Downloads/Jarvis -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -96,6 +100,10 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Persönlicher Assistent: empfängt Nachrichten und Anrufe vom eigenen Jarvis-Server" />
         </service>
+
+        <receiver
+            android:name=".AgentCall$HangupReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".BootReceiver"

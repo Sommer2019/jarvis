@@ -52,6 +52,7 @@ Telegram kosten ebenfalls nichts.
 | **Laptop/PC** | „Mach Musik an“ · „Lauter“ · „Öffne Spotify“ · „Sperr meinen Laptop“ · „Öffne meinen Downloads-Ordner“ · „Wie voll ist der Akku vom Laptop?“ · „Kopier mir den Entwurf in die Zwischenablage“ |
 | **Dateien** | „Welche PDFs liegen in meinen Downloads?“ · „Schick mir die Rechnung von Vodafone aufs Handy“ · „Fass mir den Vertrag.docx zusammen“ · „Leg auf dem PC eine Einkaufsliste an“ · „Ändere in config.yml den Port auf 9000“ · Datei am Handy **teilen → Jarvis**: „Leg das auf dem Laptop in Dokumente ab“ |
 | **Erweitert sich selbst** | „Wenn auf eventim.de/… *Tickets verfügbar* steht, ruf mich an“ · „Jeden Montag um 8 fass mir die Woche zusammen“ · „Sag Bescheid, wenn der Preis unter 300 € fällt“ · „So legst du meine Rechnungen ab: …“ (wird zum Skill) |
+| **Telefoniert für dich** (Zweit-SIM) | „Ruf beim Friseur an und mach einen Termin für Samstag aus“ · „Frag beim Italiener, ob heute um acht ein Tisch für zwei frei ist“ (Jarvis stellt sich als KI-Assistent vor und schickt dir das Ergebnis) |
 | **Jarvis meldet sich** | Nachrichten aufs Handy, bei Dringendem **ruft Jarvis an**: Das Handy klingelt, du nimmst ab, Jarvis sagt, was los ist, und hört auf deine Antwort |
 | **Handy** (in der App) | „Ruf Mama an“ · „Schreib Max per WhatsApp, dass ich 10 Minuten später komme“ · „Navigier mich zur Arbeit“ · „Wecker auf 6:30“ · „Timer 12 Minuten“ |
 | **Erinnerungen / To-dos** | „Erinnere mich morgen um 9 an die Steuer“ (legt einen Kalendertermin mit Alarm an und notiert es in `todo.md`) |
@@ -373,6 +374,48 @@ Beim Einschalten fragt Android nach drei Erlaubnissen: **Benachrichtigungen**, *
 ignorieren“** (sonst trennt Android die Verbindung) und, ab Android 14, **„Vollbild-Benachrichtigungen“**
 für den Anruf-Bildschirm. Die Verbindung startet nach einem Neustart automatisch wieder.
 
+### Jarvis telefoniert selbst (Zweit-SIM)
+
+„Ruf beim Friseur Müller an und mach einen Termin für Samstagvormittag aus, notfalls Freitag ab 16 Uhr.“
+Jarvis bestätigt mit dir Nummer, Ziel und was er zusagen darf. Dann wählt dein Handy über die
+**Zweit-SIM** (z.B. Aldi Talk), und Jarvis führt das Gespräch selbst: Er hört zu (Whisper), denkt nach
+(Claude im schnellen Modus) und spricht (Thorsten). Am Ende bekommst du das Ergebnis als
+Benachrichtigung, das Protokoll liegt in `workspace/anrufe/`. Während des Gesprächs zeigt das Handy
+„Jarvis telefoniert mit …“ mit einem **Auflegen**-Knopf.
+
+**Warum der PC?** Android lässt keine App an den Ton eines Telefonats. Deshalb läuft der Gesprächston
+vom Handy zum PC, auf dem Jarvis läuft, und Jarvis' Stimme läuft zurück.
+
+**Einrichten (einmalig):**
+1. Am PC: `pip install -e ".[calls]"` und `jarvis voice-setup` (Stimme).
+2. **Ton zwischen Handy und PC verbinden**, eine der beiden Varianten:
+   - **Bluetooth (Windows, ohne Kabel):** Das Handy mit **Smartphone-Link** koppeln und dort „Anrufe“
+     einrichten. Dann laufen Telefonate über den PC. Zwei virtuelle Audiokabel installieren, z.B.
+     **VB-CABLE** und **VB-CABLE A** von vb-audio.com. In den Windows-Soundeinstellungen als
+     *Standardkommunikationsgerät* einstellen: Wiedergabe = „CABLE Input“, Aufnahme = „CABLE-A Output“.
+     Für Jarvis gilt dann: `CALL_AUDIO_IN` = „CABLE Output“, `CALL_AUDIO_OUT` = „CABLE-A Input“.
+     *Diese Variante ist noch nicht in der Praxis erprobt, und die Bluetooth-Qualität schwankt je nach Gerät.*
+   - **Kabel (zuverlässig, ca. 10 €):** Ein USB-C-Kopfhörer-Adapter plus Headset-Splitter
+     (TRRS → Mikrofon/Kopfhörer). Der Kopfhörer-Ausgang des Handys kommt an den Mikrofon- oder
+     Line-Eingang des PCs, der Lautsprecher-Ausgang des PCs an den Mikrofon-Stecker des Splitters.
+3. Am PC: `jarvis call-setup`. Damit wählst du die beiden Audiogeräte, trägst deinen Vornamen ein
+   (für „im Auftrag von …“) und machst einen kurzen Tontest. Danach Jarvis neu starten.
+4. In der App: **⚙ → „Jarvis telefoniert selbst (Zweit-SIM)“**. Die Telefon-Berechtigungen erlauben
+   und die Aldi-SIM wählen. „Im Hintergrund verbunden bleiben“ sollte eingeschaltet sein.
+
+**Gut zu wissen:**
+- Jarvis sagt am Anfang **immer**, dass er ein KI-Assistent ist, der in deinem Auftrag anruft. Das ist
+  fest eingebaut und rechtlich nötig. Möchte das Gegenüber nicht mit einer KI sprechen, verabschiedet
+  er sich.
+- Zwischen zwei Antworten vergehen ca. **4–6 Sekunden**, weil jede Antwort ein Claude-Aufruf über dein
+  Abo ist. Längere Pausen überbrückt Jarvis mit „Einen Moment bitte“. Für kurze, sachliche Anrufe
+  (Termine, Reservierungen, Auskünfte) reicht das gut.
+- Grenzen: höchstens 6 Minuten pro Gespräch (`CALL_MAX_MINUTES`) und 10 Anrufe pro Tag. Notrufe,
+  Kurzwahlen und Mehrwertnummern sind gesperrt. Jarvis bezahlt nichts, schließt keine Verträge ab und
+  gibt nur Infos weiter, die du ihm für dieses Gespräch erlaubt hast.
+- Es wird **kein Ton aufgezeichnet**, nur ein Text-Protokoll. Die Gesprächskosten sind die deiner
+  Zweit-SIM.
+
 ---
 
 ## Vom Handy aus nutzen
@@ -621,6 +664,7 @@ jarvis/
   mcp_github.py     MCP-Server: GitHub (Benachrichtigungen, PRs, Issues, CI)
   pc.py             PC-Agent (nur Standardbibliothek, läuft eigenständig auf jedem Laptop)
   mcp_pc.py         MCP-Server: Laptop/PC steuern
+  calls.py          Jarvis telefoniert selbst (Pausen-Erkennung, Gesprächsführung)
   files.py          Dateiablage (Handy ↔ Jarvis ↔ PC)
   actions.py        Aufgaben-Warteschlange für Geräte (Handy, PCs)
   tasks.py          Daueraufträge & Webseiten-Wächter

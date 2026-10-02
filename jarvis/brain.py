@@ -191,7 +191,17 @@ class Brain:
         tools.extend(self.cfg.extra_tools)
         return tools
 
-    def build_command(self, session_id: str | None) -> list[str]:
+    def build_command(self, session_id: str | None, lite: bool = False, model: str = "") -> list[str]:
+        if lite:
+            # Schneller Modus für Telefonate: keine Tools, keine MCP-Server → kurze Antwortzeit
+            cmd = [self.cfg.claude_bin, "-p", "--output-format", "json",
+                   "--mcp-config", str(self.lite_mcp_config()), "--strict-mcp-config",
+                   "--tools", "", "--permission-mode", "dontAsk"]
+            if model or self.cfg.claude_model:
+                cmd += ["--model", model or self.cfg.claude_model]
+            if session_id:
+                cmd += ["--resume", session_id]
+            return cmd
         cmd = [
             self.cfg.claude_bin,
             "-p",
@@ -209,6 +219,18 @@ class Brain:
             cmd += ["--resume", session_id]
         return cmd
 
+    def lite_mcp_config(self) -> Path:
+        path = self.cfg.data_dir / "mcp_lite.json"
+        if not path.exists():
+            path.write_text(json.dumps({"mcpServers": {}}))
+        return path
+
+    def lite_workspace(self) -> Path:
+        """Eigener Ordner ohne CLAUDE.md – die Anruf-Regeln kommen mit jeder Nachricht."""
+        path = self.cfg.data_dir / "anruf-workspace"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def context_header(self, channel: str) -> str:
         now = datetime.now(ZoneInfo(self.cfg.timezone))
         stamp = f"{_WEEKDAYS[now.weekday()]}, {now:%d.%m.%Y %H:%M} ({self.cfg.timezone})"
@@ -220,7 +242,7 @@ class Brain:
         self.sessions.reset(conversation)
 
     async def ask(self, message: str, conversation: str = "web", *, voice: bool = False,
-                  channel: str | None = None, context: str = "") -> Reply:
+                  channel: str | None = None, context: str = "", lite: bool = False, model: str = "") -> Reply:
         lock = self._locks.setdefault(conversation, asyncio.Lock())
         async with lock:
             prompt = self.context_header(channel or conversation)
@@ -231,18 +253,19 @@ class Brain:
             prompt += "\n\n" + message
 
             session_id = self.sessions.get(conversation)
-            reply = await self._run(prompt, session_id)
+            reply = await self._run(prompt, session_id, lite, model)
             if reply.is_error and session_id and "No conversation found" in reply.text:
                 log.info("Session %s abgelaufen – starte neue", session_id)
                 self.sessions.reset(conversation)
-                reply = await self._run(prompt, None)
+                reply = await self._run(prompt, None, lite, model)
             if reply.session_id and not reply.is_error:
                 self.sessions.set(conversation, reply.session_id)
             return reply
 
-    async def _run(self, prompt: str, session_id: str | None) -> Reply:
-        self._write_mcp_config()  # z.B. Handy-App kann inzwischen verbunden sein
-        cmd = self.build_command(session_id)
+    async def _run(self, prompt: str, session_id: str | None, lite: bool = False, model: str = "") -> Reply:
+        if not lite:
+            self._write_mcp_config()  # z.B. Handy-App kann inzwischen verbunden sein
+        cmd = self.build_command(session_id, lite, model)
         log.debug("Starte: %s", " ".join(cmd))
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -250,7 +273,7 @@ class Brain:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.cfg.workspace),
+                cwd=str(self.lite_workspace() if lite else self.cfg.workspace),
                 env=subscription_env(),
             )
         except FileNotFoundError:

@@ -45,6 +45,7 @@ class MainActivity : Activity() {
         const val REQ_TERMUX = 3
         const val REQ_LOCATION = 4
         const val REQ_CALENDAR = 5
+        const val REQ_CALLS = 7
         const val PREFS = "jarvis"
         const val LOCAL_URL = "http://127.0.0.1:8080"
         const val TERMUX = "com.termux"
@@ -357,6 +358,10 @@ class MainActivity : Activity() {
             text = "🔊 Stimme & Tempo einstellen"
             setOnClickListener { showVoiceSettings() }
         })
+        layout.addView(android.widget.Button(this).apply {
+            text = "🤖📞 Jarvis telefoniert selbst (Zweit-SIM)"
+            setOnClickListener { showCallSettings() }
+        })
 
         AlertDialog.Builder(this)
             .setTitle("Jarvis verbinden")
@@ -429,6 +434,45 @@ class MainActivity : Activity() {
             showError("Oberfläche startet nicht", "Die Seite von $serverUrl kam an, aber die App-Oberfläche " +
                 "(JavaScript/CSS) lief nicht. Bitte schick diese Meldung an den Entwickler. $details")
         }
+    }
+
+    // ------------------------------------------------- Jarvis telefoniert
+    /** Berechtigungen + SIM-Auswahl für Telefonate, die Jarvis selbst führt. */
+    fun showCallSettings() {
+        if (!AgentCall.hasPermissions(this)) {
+            requestPermissions(AgentCall.PERMISSIONS, REQ_CALLS)
+            return
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad / 2, pad, 0) }
+        layout.addView(TextView(this).apply {
+            text = "Über welche SIM soll Jarvis anrufen? Der Gesprächston muss zum PC laufen, auf dem Jarvis " +
+                "läuft (Bluetooth mit Windows-Smartphone-Link oder Kabel) – Anleitung: „jarvis call-setup“."
+            setPadding(0, 0, 0, pad / 2)
+        })
+        val accounts = AgentCall.accounts(this)
+        val current = AgentCall.pickAccount(this)
+        val group = android.widget.RadioGroup(this)
+        accounts.forEachIndexed { i, (handle, label) ->
+            group.addView(android.widget.RadioButton(this).apply {
+                id = 2000 + i
+                text = label
+                isChecked = handle == current
+            })
+        }
+        if (accounts.isEmpty()) layout.addView(TextView(this).apply { text = "Keine SIM gefunden." })
+        layout.addView(group)
+        AlertDialog.Builder(this)
+            .setTitle("Jarvis-Anrufe")
+            .setView(layout)
+            .setNegativeButton("Abbrechen", null)
+            .setPositiveButton("Speichern") { _, _ ->
+                accounts.getOrNull(group.checkedRadioButtonId - 2000)?.let {
+                    prefs.edit().putString("call_sim", it.first.id).apply()
+                    Toast.makeText(this, "Jarvis ruft über „${it.second}“ an.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
     }
 
     // ------------------------------------------------------------ Stimme
@@ -695,6 +739,8 @@ class MainActivity : Activity() {
             else Toast.makeText(this, "Ohne Kalender-Zugriff kann Jarvis deinen Handy-Kalender nicht nutzen.", Toast.LENGTH_LONG).show()
             REQ_LOCATION -> if (!granted && !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION))
                 Toast.makeText(this, "Ohne Standort-Freigabe kann Jarvis deinen Ort nicht nutzen.", Toast.LENGTH_LONG).show()
+            REQ_CALLS -> if (AgentCall.hasPermissions(this)) showCallSettings()
+            else Toast.makeText(this, "Ohne Telefon-Berechtigung kann Jarvis nicht selbst anrufen.", Toast.LENGTH_LONG).show()
             REQ_AUDIO -> if (!granted) Toast.makeText(this, "Ohne Mikrofon keine Sprachsteuerung.", Toast.LENGTH_LONG).show()
         }
     }

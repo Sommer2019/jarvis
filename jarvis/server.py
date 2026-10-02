@@ -81,6 +81,11 @@ class ActionDone(BaseModel):
     result: object = None
 
 
+class CallState(BaseModel):
+    state: str
+    detail: str = ""
+
+
 class PhoneCalendar(BaseModel):
     id: int
     name: str = ""
@@ -190,6 +195,26 @@ def create_app(cfg: Config, brain: Brain | None = None, whatsapp=None) -> FastAP
     @app.post("/api/phone/actions/{action_id}/done", dependencies=[Depends(auth)])
     async def phone_action_done(action_id: str):
         return {"ok": phone.done(action_id)}
+
+    # ------------------------------------------------- Jarvis-Telefonate
+    from .calls import CallStore
+
+    calls = CallStore(cfg.data_dir)
+
+    @app.post("/api/calls/{call_id}/state", dependencies=[Depends(auth)])
+    async def call_state(call_id: str, body: CallState):
+        if body.state not in ("dialing", "ended", "failed"):
+            raise HTTPException(400, "state: dialing, ended oder failed")
+        call = calls.report(call_id, body.state, body.detail[:200])
+        if not call:
+            raise HTTPException(404, "Anruf unbekannt")
+        return {"status": call["status"]}
+
+    @app.get("/api/calls", dependencies=[Depends(auth)])
+    async def call_list():
+        return {"enabled": cfg.calls_enabled,
+                "calls": [{k: c.get(k) for k in ("id", "name", "number", "status", "result", "error", "created")}
+                          for c in reversed(calls.all()[-10:])]}
 
     # --------------------------------------------------------------- PC
     @app.post("/api/pc/hello", dependencies=[Depends(auth)])

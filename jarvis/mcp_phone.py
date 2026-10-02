@@ -165,6 +165,51 @@ def phone_ring(text: str) -> dict:
             "note": "Das Handy klingelt (verfällt nach 30 Min., falls offline)."}
 
 
+# ------------------------------------------------- Jarvis telefoniert selbst
+_CALLS = bool(os.getenv("CALL_AUDIO_IN") and os.getenv("CALL_AUDIO_OUT"))
+
+
+def _calls():
+    from .calls import CallStore
+
+    return CallStore(store.dir)
+
+
+@mcp.tool(enabled=_CALLS)
+def phone_agent_call(number: str, goal: str, contact_name: str = "", max_minutes: int = 6) -> dict:
+    """Jarvis ruft SELBST an und führt das Gespräch (über die Zweit-SIM im Handy, Stimme „Thorsten“).
+    Vorher IMMER mit dem Nutzer Nummer, Ziel und erlaubte Zusagen bestätigen. `goal` ist der komplette
+    Auftrag fürs Gespräch: worum es geht, welche Infos Jarvis weitergeben darf (z.B. Name, Rückrufnummer),
+    was vereinbart werden soll und was nicht (z.B. „Termin Sa vormittag, notfalls Fr ab 16 Uhr; nichts bezahlen“).
+    Jarvis stellt sich am Anfang automatisch als KI-Assistent vor. Notrufe/Sondernummern sind gesperrt.
+    Das Ergebnis kommt als Benachrichtigung aufs Handy; Stand mit phone_agent_call_status."""
+    call = _calls().create(number, goal, contact_name, max_minutes)
+    store.queue("agent_call", {"call_id": call["id"], "number": call["number"], "name": contact_name})
+    return {"call_id": call["id"], "status": "wird gewählt",
+            "hinweis": "Läuft im Hintergrund. Dem Nutzer kurz sagen, dass du anrufst und dich mit dem Ergebnis meldest."}
+
+
+@mcp.tool(enabled=_CALLS)
+def phone_agent_call_status(call_id: str = "") -> dict:
+    """Stand/Ergebnis eines Jarvis-Telefonats (ohne call_id: das letzte) inkl. Gesprächsprotokoll."""
+    call = _calls().get(call_id) if call_id else _calls().latest()
+    if not call:
+        return {"hinweis": "Kein Anruf gefunden"}
+    return {k: call.get(k) for k in ("id", "name", "number", "goal", "status", "result", "error", "transcript")}
+
+
+@mcp.tool(enabled=_CALLS)
+def phone_agent_hangup(call_id: str = "") -> dict:
+    """Bricht ein laufendes Jarvis-Telefonat ab."""
+    calls = _calls()
+    call = calls.get(call_id) if call_id else calls.latest()
+    if not call:
+        return {"hinweis": "Kein Anruf gefunden"}
+    calls.update(call["id"], abort=True)
+    store.queue("agent_hangup", {"call_id": call["id"]})
+    return {"ok": True, "call_id": call["id"]}
+
+
 # ----------------------------------------------------------------- Dateien
 def _files():
     from .files import FileStore

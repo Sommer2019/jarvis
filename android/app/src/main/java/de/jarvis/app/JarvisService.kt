@@ -159,6 +159,10 @@ class JarvisService : Service() {
         when {
             type == "notify" -> { showMessage(this, p.optString("title", "Jarvis"), p.optString("text")); ack(id) }
             type == "ring" -> { showIncomingCall(this, p.optString("text")); ack(id) }
+            type == "agent_call" -> {
+                AgentCall.start(this, p.optString("call_id"), p.optString("number"), p.optString("name")); ack(id)
+            }
+            type == "agent_hangup" -> { AgentCall.hangup(this, p.optString("call_id")); ack(id) }
             type == "file" -> {
                 try { Api.downloadFile(this, p.optString("file_id"), p.optString("name")) } catch (e: Exception) {
                     showMessage(this, "Jarvis", "Download fehlgeschlagen: ${p.optString("name")} (${e.message})")
